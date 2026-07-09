@@ -1,115 +1,57 @@
 import type {
+  ChatImageAttachment as ContractChatImageAttachment,
+  OrchestrationCheckpointFile,
+  OrchestrationCheckpointSummary,
   OrchestrationLatestTurn,
-  OrchestrationProposedPlanId,
-  OrchestrationSessionStatus,
-  OrchestrationThreadActivity,
+  OrchestrationMessage,
+  OrchestrationProposedPlan,
+  OrchestrationSession,
   ProjectScript as ContractProjectScript,
-  ThreadId,
-  ProjectId,
-  TurnId,
-  MessageId,
-  CheckpointRef,
-  ProviderKind,
   ProviderInteractionMode,
   RuntimeMode,
 } from "@t3tools/contracts";
+import type {
+  EnvironmentProject,
+  EnvironmentThread,
+  EnvironmentThreadShell,
+} from "@t3tools/client-runtime/state/shell";
 
 export type SessionPhase = "disconnected" | "connecting" | "ready" | "running";
 export const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 
 export const DEFAULT_INTERACTION_MODE: ProviderInteractionMode = "default";
 export const DEFAULT_THREAD_TERMINAL_HEIGHT = 280;
-export const DEFAULT_THREAD_TERMINAL_ID = "default";
-export const MAX_THREAD_TERMINAL_COUNT = 4;
+export const DEFAULT_THREAD_TERMINAL_ID = "term-1";
+export const MAX_TERMINALS_PER_GROUP = 4;
 export type ProjectScript = ContractProjectScript;
 
 export interface ThreadTerminalGroup {
   id: string;
   terminalIds: string[];
+  splitDirection?: "horizontal" | "vertical";
 }
 
-export interface ChatImageAttachment {
-  type: "image";
-  id: string;
-  name: string;
-  mimeType: string;
-  sizeBytes: number;
-  previewUrl?: string;
+export interface ChatImageAttachment extends ContractChatImageAttachment {
+  readonly previewUrl?: string;
 }
 
 export type ChatAttachment = ChatImageAttachment;
 
-export interface ChatMessage {
-  id: MessageId;
-  role: "user" | "assistant" | "system";
-  text: string;
-  attachments?: ChatAttachment[];
-  createdAt: string;
-  completedAt?: string | undefined;
-  streaming: boolean;
+export interface ChatMessage extends Omit<OrchestrationMessage, "attachments"> {
+  readonly attachments?: ReadonlyArray<ChatAttachment> | undefined;
 }
 
-export interface ProposedPlan {
-  id: OrchestrationProposedPlanId;
-  turnId: TurnId | null;
-  planMarkdown: string;
-  createdAt: string;
-  updatedAt: string;
-}
+export type ProposedPlan = OrchestrationProposedPlan;
+export type TurnDiffFileChange = OrchestrationCheckpointFile;
+export type TurnDiffSummary = OrchestrationCheckpointSummary;
 
-export interface TurnDiffFileChange {
-  path: string;
-  kind?: string | undefined;
-  additions?: number | undefined;
-  deletions?: number | undefined;
-}
+export type Project = EnvironmentProject;
+export type Thread = EnvironmentThread;
+export type ThreadShell = EnvironmentThreadShell;
 
-export interface TurnDiffSummary {
-  turnId: TurnId;
-  completedAt: string;
-  status?: string | undefined;
-  files: TurnDiffFileChange[];
-  checkpointRef?: CheckpointRef | undefined;
-  assistantMessageId?: MessageId | undefined;
-  checkpointTurnCount?: number | undefined;
-}
-
-export interface Project {
-  id: ProjectId;
-  name: string;
-  cwd: string;
-  model: string;
-  expanded: boolean;
-  scripts: ProjectScript[];
-}
-
-export interface Thread {
-  id: ThreadId;
-  codexThreadId: string | null;
-  projectId: ProjectId;
-  title: string;
-  model: string;
-  runtimeMode: RuntimeMode;
-  interactionMode: ProviderInteractionMode;
-  session: ThreadSession | null;
-  messages: ChatMessage[];
-  proposedPlans: ProposedPlan[];
-  error: string | null;
-  createdAt: string;
+export interface ThreadTurnState {
   latestTurn: OrchestrationLatestTurn | null;
-  lastVisitedAt?: string | undefined;
-  branch: string | null;
-  worktreePath: string | null;
-  turnDiffSummaries: TurnDiffSummary[];
-  activities: OrchestrationThreadActivity[];
 }
 
-export interface ThreadSession {
-  provider: ProviderKind;
-  status: SessionPhase | "error" | "closed";
-  activeTurnId?: TurnId | undefined;
-  createdAt: string;
-  updatedAt: string;
-  lastError?: string;
-  orchestrationStatus: OrchestrationSessionStatus;
-}
+export type SidebarThreadSummary = EnvironmentThreadShell;
+export type ThreadSession = OrchestrationSession;

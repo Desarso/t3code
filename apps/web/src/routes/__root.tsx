@@ -1,31 +1,81 @@
-import { ThreadId } from "@t3tools/contracts";
+import { type ServerLifecycleWelcomePayload } from "@t3tools/contracts";
+import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
   Outlet,
-  createRootRouteWithContext,
+  createRootRoute,
   type ErrorComponentProps,
+  useLocation,
   useNavigate,
-  useRouterState,
 } from "@tanstack/react-router";
-import { useEffect, useRef } from "react";
-import { QueryClient, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 
-import { APP_DISPLAY_NAME } from "../branding";
+import { APP_BASE_NAME, APP_DISPLAY_NAME, APP_STAGE_LABEL } from "../branding";
+import { resolveServerBackedAppDisplayName } from "../branding.logic";
+import { AppSidebarLayout } from "../components/AppSidebarLayout";
+import { CommandPalette } from "../components/CommandPalette";
+import { ConnectOnboardingDialog } from "../components/cloud/ConnectOnboardingDialog";
+import { RelayClientInstallDialog } from "../components/cloud/RelayClientInstallDialog";
+import { SshPasswordPromptDialog } from "../components/desktop/SshPasswordPromptDialog";
+import { ProviderUpdateLaunchNotification } from "../components/ProviderUpdateLaunchNotification";
+import { SlowRpcRequestToastCoordinator } from "../components/SlowRpcRequestToastCoordinator";
 import { Button } from "../components/ui/button";
-import { AnchoredToastProvider, ToastProvider, toastManager } from "../components/ui/toast";
-import { serverConfigQueryOptions, serverQueryKeys } from "../lib/serverReactQuery";
-import { readNativeApi } from "../nativeApi";
-import { useComposerDraftStore } from "../composerDraftStore";
-import { useStore } from "../store";
-import { useTerminalStateStore } from "../terminalStateStore";
-import { preferredTerminalEditor } from "../terminal-links";
-import { terminalRunningSubprocessFromEvent } from "../terminalActivity";
-import { onServerConfigUpdated, onServerWelcome } from "../wsNativeApi";
-import { providerQueryKeys } from "../lib/providerReactQuery";
-import { collectActiveTerminalThreadIds } from "../lib/terminalStateCleanup";
+import {
+  AnchoredToastProvider,
+  stackedThreadToast,
+  ToastProvider,
+  toastManager,
+} from "../components/ui/toast";
+import { resolveAndPersistPreferredEditor } from "../editorPreferences";
+import { useClientSettings } from "../hooks/useSettings";
+import {
+  deriveLogicalProjectKeyFromSettings,
+  derivePhysicalProjectKeyFromPath,
+  selectProjectGroupingSettings,
+} from "../logicalProject";
+import { useUiStateStore } from "../uiStateStore";
+import { syncBrowserChromeTheme } from "../hooks/useTheme";
+import { configureClientTracing } from "../observability/clientTracing";
+import { resolveInitialServerAuthGateState } from "../environments/primary";
+import { hasHostedPairingRequest, isHostedStaticApp } from "../hostedPairing";
+import { shellEnvironment } from "../state/shell";
+import { useAtomValue } from "@effect/atom-react";
+import { useAtomCommand } from "../state/use-atom-command";
+import { useEnvironments, usePrimaryEnvironment } from "../state/environments";
+import {
+  primaryServerConfigAtom,
+  primaryServerConfigEventAtom,
+  primaryServerWelcomeAtom,
+} from "../state/server";
+import { readProject, setActiveEnvironmentId, useActiveEnvironmentId } from "../state/entities";
+import {
+  createKeybindingsUpdateToastController,
+  type KeybindingsUpdateToastController,
+} from "../components/KeybindingsUpdateToast.logic";
 
-export const Route = createRootRouteWithContext<{
-  queryClient: QueryClient;
-}>()({
+export const Route = createRootRoute({
+  beforeLoad: async ({ location }) => {
+    if (location.pathname === "/pair" && hasHostedPairingRequest(new URL(window.location.href))) {
+      return {
+        authGateState: {
+          status: "hosted-pairing",
+        } as const,
+      };
+    }
+
+    if (isHostedStaticApp(new URL(window.location.href))) {
+      return {
+        authGateState: {
+          status: "hosted-static",
+        } as const,
+      };
+    }
+
+    const authGateState = await resolveInitialServerAuthGateState();
+    return {
+      authGateState,
+    };
+  },
   component: RootRouteView,
   errorComponent: RootRouteErrorView,
   head: () => ({
@@ -34,27 +84,106 @@ export const Route = createRootRouteWithContext<{
 });
 
 function RootRouteView() {
-  if (!readNativeApi()) {
+  const pathname = useLocation({ select: (location) => location.pathname });
+  const { authGateState } = Route.useRouteContext();
+  const primaryEnvironmentAuthenticated = authGateState.status === "authenticated";
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      syncBrowserChromeTheme();
+    });
+    return () => {
+      window.cancelAnimationFrame(frame);
+    };
+  }, [pathname]);
+
+  if (pathname === "/pair") {
     return (
-      <div className="flex h-screen flex-col bg-background text-foreground">
-        <div className="flex flex-1 items-center justify-center">
-          <p className="text-sm text-muted-foreground">
-            Connecting to {APP_DISPLAY_NAME} server...
-          </p>
-        </div>
-      </div>
+      <>
+        <DocumentTitleSync />
+        <Outlet />
+      </>
     );
   }
+
+  if (authGateState.status !== "authenticated" && authGateState.status !== "hosted-static") {
+    return (
+      <>
+        <DocumentTitleSync />
+        <Outlet />
+      </>
+    );
+  }
+
+  const appShell = (
+    <CommandPalette>
+      <AppSidebarLayout>
+        <Outlet />
+      </AppSidebarLayout>
+    </CommandPalette>
+  );
 
   return (
     <ToastProvider>
       <AnchoredToastProvider>
-        <EventRouter />
-        <DesktopProjectBootstrap />
-        <Outlet />
+        <DocumentTitleSync />
+        {primaryEnvironmentAuthenticated ? <AuthenticatedTracingBootstrap /> : null}
+        <RelayClientInstallDialog />
+        <ConnectOnboardingDialog />
+        <SshPasswordPromptDialog />
+        <SlowRpcRequestToastCoordinator />
+        <HostedStaticEnvironmentBootstrap />
+        {primaryEnvironmentAuthenticated ? <EventRouter /> : null}
+        {primaryEnvironmentAuthenticated ? <ProviderUpdateLaunchNotification /> : null}
+        {appShell}
       </AnchoredToastProvider>
     </ToastProvider>
   );
+}
+
+function DocumentTitleSync() {
+  const primaryServerVersion =
+    useAtomValue(primaryServerConfigAtom)?.environment.serverVersion ?? null;
+  const title = resolveServerBackedAppDisplayName({
+    baseName: APP_BASE_NAME,
+    fallbackDisplayName: APP_DISPLAY_NAME,
+    fallbackStageLabel: APP_STAGE_LABEL,
+    primaryServerVersion,
+  });
+
+  useEffect(() => {
+    document.title = title;
+  }, [title]);
+
+  return null;
+}
+
+function HostedStaticEnvironmentBootstrap() {
+  const { environments } = useEnvironments();
+  const activeEnvironmentId = useActiveEnvironmentId();
+
+  useEffect(() => {
+    if (
+      environments.some(
+        (environment) => environment.entry.target._tag === "PrimaryConnectionTarget",
+      )
+    ) {
+      return;
+    }
+
+    if (activeEnvironmentId) {
+      return;
+    }
+
+    const firstSavedEnvironment = environments[0];
+    if (!firstSavedEnvironment) {
+      return;
+    }
+
+    setActiveEnvironmentId(firstSavedEnvironment.environmentId);
+  }, [activeEnvironmentId, environments]);
+
+  return null;
 }
 
 function RootRouteErrorView({ error, reset }: ErrorComponentProps) {
@@ -128,175 +257,151 @@ function errorDetails(error: unknown): string {
   }
 }
 
-function EventRouter() {
-  const syncServerReadModel = useStore((store) => store.syncServerReadModel);
-  const setProjectExpanded = useStore((store) => store.setProjectExpanded);
-  const removeOrphanedTerminalStates = useTerminalStateStore(
-    (store) => store.removeOrphanedTerminalStates,
-  );
-  const queryClient = useQueryClient();
-  const navigate = useNavigate();
-  const pathname = useRouterState({ select: (state) => state.location.pathname });
-  const pathnameRef = useRef(pathname);
-  const lastConfigIssuesSignatureRef = useRef<string | null>(null);
-  const handledBootstrapThreadIdRef = useRef<string | null>(null);
-
-  pathnameRef.current = pathname;
-
+function AuthenticatedTracingBootstrap() {
   useEffect(() => {
-    const api = readNativeApi();
-    if (!api) return;
-    let disposed = false;
-    let latestSequence = 0;
-    let syncing = false;
-    let pending = false;
-
-    const flushSnapshotSync = async (): Promise<void> => {
-      const snapshot = await api.orchestration.getSnapshot();
-      if (disposed) return;
-      latestSequence = Math.max(latestSequence, snapshot.snapshotSequence);
-      syncServerReadModel(snapshot);
-      const draftThreadIds = Object.keys(
-        useComposerDraftStore.getState().draftThreadsByThreadId,
-      ) as ThreadId[];
-      const activeThreadIds = collectActiveTerminalThreadIds({
-        snapshotThreads: snapshot.threads,
-        draftThreadIds,
-      });
-      removeOrphanedTerminalStates(activeThreadIds);
-      if (pending) {
-        pending = false;
-        await flushSnapshotSync();
-      }
-    };
-
-    const syncSnapshot = async () => {
-      if (syncing) {
-        pending = true;
-        return;
-      }
-      syncing = true;
-      pending = false;
-      try {
-        await flushSnapshotSync();
-      } catch {
-        // Keep prior state and wait for next domain event to trigger a resync.
-      }
-      syncing = false;
-    };
-
-    void syncSnapshot().catch(() => undefined);
-
-    const unsubDomainEvent = api.orchestration.onDomainEvent((event) => {
-      if (event.sequence <= latestSequence) {
-        return;
-      }
-      latestSequence = event.sequence;
-      if (event.type === "thread.turn-diff-completed" || event.type === "thread.reverted") {
-        void queryClient.invalidateQueries({ queryKey: providerQueryKeys.all });
-      }
-      void syncSnapshot();
-    });
-    const unsubTerminalEvent = api.terminal.onEvent((event) => {
-      const hasRunningSubprocess = terminalRunningSubprocessFromEvent(event);
-      if (hasRunningSubprocess === null) {
-        return;
-      }
-      useTerminalStateStore
-        .getState()
-        .setTerminalActivity(
-          ThreadId.makeUnsafe(event.threadId),
-          event.terminalId,
-          hasRunningSubprocess,
-        );
-    });
-    const unsubWelcome = onServerWelcome((payload) => {
-      void (async () => {
-        await syncSnapshot();
-        if (disposed) {
-          return;
-        }
-
-        if (!payload.bootstrapProjectId || !payload.bootstrapThreadId) {
-          return;
-        }
-        setProjectExpanded(payload.bootstrapProjectId, true);
-
-        if (pathnameRef.current !== "/") {
-          return;
-        }
-        if (handledBootstrapThreadIdRef.current === payload.bootstrapThreadId) {
-          return;
-        }
-        await navigate({
-          to: "/$threadId",
-          params: { threadId: payload.bootstrapThreadId },
-          replace: true,
-        });
-        handledBootstrapThreadIdRef.current = payload.bootstrapThreadId;
-      })().catch(() => undefined);
-    });
-    const unsubServerConfigUpdated = onServerConfigUpdated((payload) => {
-      const signature = JSON.stringify(payload.issues);
-      if (lastConfigIssuesSignatureRef.current === signature) {
-        return;
-      }
-      lastConfigIssuesSignatureRef.current = signature;
-
-      void queryClient.invalidateQueries({ queryKey: serverQueryKeys.config() });
-      const issue = payload.issues.find((entry) => entry.kind.startsWith("keybindings."));
-      if (!issue) {
-        toastManager.add({
-          type: "success",
-          title: "Keybindings updated",
-          description: "Keybindings configuration reloaded successfully.",
-        });
-        return;
-      }
-
-      toastManager.add({
-        type: "warning",
-        title: "Invalid keybindings configuration",
-        description: issue.message,
-        actionProps: {
-          children: "Open keybindings.json",
-          onClick: () => {
-            void queryClient
-              .ensureQueryData(serverConfigQueryOptions())
-              .then((config) =>
-                api.shell.openInEditor(config.keybindingsConfigPath, preferredTerminalEditor()),
-              )
-              .catch((error) => {
-                toastManager.add({
-                  type: "error",
-                  title: "Unable to open keybindings file",
-                  description:
-                    error instanceof Error ? error.message : "Unknown error opening file.",
-                });
-              });
-          },
-        },
-      });
-    });
-    return () => {
-      disposed = true;
-      unsubDomainEvent();
-      unsubTerminalEvent();
-      unsubWelcome();
-      unsubServerConfigUpdated();
-    };
-  }, [
-    navigate,
-    queryClient,
-    removeOrphanedTerminalStates,
-    setProjectExpanded,
-    syncServerReadModel,
-  ]);
+    void configureClientTracing();
+  }, []);
 
   return null;
 }
 
-function DesktopProjectBootstrap() {
-  // Desktop hydration runs through EventRouter project + orchestration sync.
+function EventRouter() {
+  const navigate = useNavigate();
+  const pathname = useLocation({ select: (loc) => loc.pathname });
+  const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
+  const primaryEnvironment = usePrimaryEnvironment();
+  const openInEditor = useAtomCommand(shellEnvironment.openInEditor, {
+    reportFailure: false,
+  });
+  const serverConfig = useAtomValue(primaryServerConfigAtom);
+  const serverConfigEvent = useAtomValue(primaryServerConfigEventAtom);
+  const serverWelcome = useAtomValue(primaryServerWelcomeAtom);
+  const readPathname = useEffectEvent(() => pathname);
+  const handledBootstrapThreadIdRef = useRef<string | null>(null);
+  const handledConfigEventRef = useRef(serverConfigEvent);
+  const [keybindingsToastController] = useState<KeybindingsUpdateToastController>(() =>
+    createKeybindingsUpdateToastController({}),
+  );
+
+  const handleWelcome = useEffectEvent((payload: ServerLifecycleWelcomePayload | null) => {
+    if (!payload) return;
+
+    setActiveEnvironmentId(payload.environment.environmentId);
+    void (async () => {
+      if (!payload.bootstrapProjectId || !payload.bootstrapThreadId) {
+        return;
+      }
+      const bootstrapProject = readProject(
+        scopeProjectRef(payload.environment.environmentId, payload.bootstrapProjectId),
+      );
+      const bootstrapProjectKey =
+        (bootstrapProject
+          ? deriveLogicalProjectKeyFromSettings(bootstrapProject, projectGroupingSettings)
+          : null) ??
+        (serverConfig?.cwd
+          ? derivePhysicalProjectKeyFromPath(payload.environment.environmentId, serverConfig.cwd)
+          : null) ??
+        scopedProjectKey(
+          scopeProjectRef(payload.environment.environmentId, payload.bootstrapProjectId),
+        );
+      useUiStateStore.getState().setProjectExpanded(bootstrapProjectKey, true);
+
+      if (readPathname() !== "/") {
+        return;
+      }
+      if (handledBootstrapThreadIdRef.current === payload.bootstrapThreadId) {
+        return;
+      }
+      await navigate({
+        to: "/$environmentId/$threadId",
+        params: {
+          environmentId: payload.environment.environmentId,
+          threadId: payload.bootstrapThreadId,
+        },
+        replace: true,
+      });
+      handledBootstrapThreadIdRef.current = payload.bootstrapThreadId;
+    })().catch(() => undefined);
+  });
+
+  const handleServerConfigUpdated = useEffectEvent(() => {
+    const decision = keybindingsToastController.handle(serverConfigEvent);
+    if (!decision) {
+      return;
+    }
+
+    if (decision._tag === "Success") {
+      toastManager.add({
+        type: "success",
+        title: "Keybindings updated",
+        description: "Keybindings configuration reloaded successfully.",
+      });
+      return;
+    }
+
+    toastManager.add(
+      stackedThreadToast({
+        type: "warning",
+        title: "Invalid keybindings configuration",
+        description: decision.message,
+        actionVariant: "outline",
+        actionProps: {
+          children: "Open keybindings.json",
+          onClick: () => {
+            if (!serverConfig || !primaryEnvironment) {
+              return;
+            }
+
+            const editor = resolveAndPersistPreferredEditor(serverConfig.availableEditors);
+            if (!editor) {
+              return;
+            }
+            void (async () => {
+              const result = await openInEditor({
+                environmentId: primaryEnvironment.environmentId,
+                input: {
+                  cwd: serverConfig.keybindingsConfigPath,
+                  editor,
+                },
+              });
+              if (result._tag === "Success") {
+                return;
+              }
+              const error = squashAtomCommandFailure(result);
+              toastManager.add(
+                stackedThreadToast({
+                  type: "error",
+                  title: "Unable to open keybindings file",
+                  description:
+                    error instanceof Error ? error.message : "Unknown error opening file.",
+                }),
+              );
+            })();
+          },
+        },
+      }),
+    );
+  });
+
+  useEffect(() => {
+    if (!serverConfig) {
+      return;
+    }
+
+    setActiveEnvironmentId(serverConfig.environment.environmentId);
+  }, [serverConfig]);
+
+  useEffect(() => {
+    handleWelcome(serverWelcome);
+  }, [serverWelcome]);
+
+  useEffect(() => {
+    if (serverConfigEvent === null || handledConfigEventRef.current === serverConfigEvent) {
+      return;
+    }
+    handledConfigEventRef.current = serverConfigEvent;
+    handleServerConfigUpdated();
+  }, [serverConfigEvent]);
+
   return null;
 }

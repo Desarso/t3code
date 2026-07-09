@@ -10,7 +10,7 @@
 import type {
   ApprovalRequestId,
   ProviderApprovalDecision,
-  ProviderKind,
+  ProviderDriverKind,
   ProviderUserInputAnswers,
   ProviderRuntimeEvent,
   ProviderSendTurnInput,
@@ -20,10 +20,10 @@ import type {
   ProviderTurnStartResult,
   TurnId,
 } from "@t3tools/contracts";
-import type { Effect } from "effect";
-import type { Stream } from "effect";
+import type * as Effect from "effect/Effect";
+import type * as Stream from "effect/Stream";
 
-export type ProviderSessionModelSwitchMode = "in-session" | "restart-session" | "unsupported";
+export type ProviderSessionModelSwitchMode = "in-session" | "unsupported";
 
 export interface ProviderAdapterCapabilities {
   /**
@@ -46,7 +46,7 @@ export interface ProviderAdapterShape<TError> {
   /**
    * Provider kind implemented by this adapter.
    */
-  readonly provider: ProviderKind;
+  readonly provider: ProviderDriverKind;
   readonly capabilities: ProviderAdapterCapabilities;
 
   /**
@@ -66,10 +66,7 @@ export interface ProviderAdapterShape<TError> {
   /**
    * Interrupt an active turn.
    */
-  readonly interruptTurn: (
-    threadId: ThreadId,
-    turnId?: TurnId,
-  ) => Effect.Effect<void, TError>;
+  readonly interruptTurn: (threadId: ThreadId, turnId?: TurnId) => Effect.Effect<void, TError>;
 
   /**
    * Respond to an interactive approval request.
@@ -107,9 +104,7 @@ export interface ProviderAdapterShape<TError> {
   /**
    * Read a provider thread snapshot.
    */
-  readonly readThread: (
-    threadId: ThreadId,
-  ) => Effect.Effect<ProviderThreadSnapshot, TError>;
+  readonly readThread: (threadId: ThreadId) => Effect.Effect<ProviderThreadSnapshot, TError>;
 
   /**
    * Roll back a provider thread by N turns.

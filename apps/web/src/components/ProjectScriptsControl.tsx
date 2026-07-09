@@ -4,6 +4,11 @@ import type {
   ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
 import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+  type AtomCommandResult,
+} from "@t3tools/client-runtime/state/runtime";
+import {
   BugIcon,
   ChevronDownIcon,
   FlaskConicalIcon,
@@ -14,19 +19,28 @@ import {
   SettingsIcon,
   WrenchIcon,
 } from "lucide-react";
-import React, { type FormEvent, type KeyboardEvent, useMemo, useState } from "react";
+import React, { type FormEvent, type KeyboardEvent, useCallback, useMemo, useState } from "react";
 
 import {
   keybindingValueForCommand,
   decodeProjectScriptKeybindingRule,
 } from "~/lib/projectScriptKeybindings";
+import { keybindingFromKeyboardEvent } from "~/components/settings/KeybindingsSettings.logic";
 import {
   commandForProjectScript,
   nextProjectScriptId,
   primaryProjectScript,
 } from "~/projectScripts";
 import { shortcutLabelForCommand } from "~/keybindings";
-import { isMacPlatform } from "~/lib/utils";
+import {
+  AlertDialog,
+  AlertDialogClose,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogPopup,
+  AlertDialogTitle,
+} from "./ui/alert-dialog";
 import { Button } from "./ui/button";
 import {
   Dialog,
@@ -44,6 +58,7 @@ import { Menu, MenuItem, MenuPopup, MenuShortcut, MenuTrigger } from "./ui/menu"
 import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
 import { Switch } from "./ui/switch";
 import { Textarea } from "./ui/textarea";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 const SCRIPT_ICONS: Array<{ id: ProjectScriptIcon; label: string }> = [
   { id: "play", label: "Play" },
@@ -75,66 +90,25 @@ export interface NewProjectScriptInput {
   icon: ProjectScriptIcon;
   runOnWorktreeCreate: boolean;
   keybinding: string | null;
+  /** Optional URL to open in the in-app preview when this script runs. */
+  previewUrl: string | null;
+  /** When true, automatically open the preview panel pointed at `previewUrl`. */
+  autoOpenPreview: boolean;
 }
 
+export type ProjectScriptActionResult = AtomCommandResult<void, unknown>;
+
 interface ProjectScriptsControlProps {
-  scripts: ProjectScript[];
+  scripts: ReadonlyArray<ProjectScript>;
   keybindings: ResolvedKeybindingsConfig;
   preferredScriptId?: string | null;
   onRunScript: (script: ProjectScript) => void;
-  onAddScript: (input: NewProjectScriptInput) => Promise<void> | void;
-  onUpdateScript: (scriptId: string, input: NewProjectScriptInput) => Promise<void> | void;
-}
-
-function normalizeShortcutKeyToken(key: string): string | null {
-  const normalized = key.toLowerCase();
-  if (
-    normalized === "meta" ||
-    normalized === "control" ||
-    normalized === "ctrl" ||
-    normalized === "shift" ||
-    normalized === "alt" ||
-    normalized === "option"
-  ) {
-    return null;
-  }
-  if (normalized === " ") return "space";
-  if (normalized === "escape") return "esc";
-  if (normalized === "arrowup") return "arrowup";
-  if (normalized === "arrowdown") return "arrowdown";
-  if (normalized === "arrowleft") return "arrowleft";
-  if (normalized === "arrowright") return "arrowright";
-  if (normalized.length === 1) return normalized;
-  if (normalized.startsWith("f") && normalized.length <= 3) return normalized;
-  if (normalized === "enter" || normalized === "tab" || normalized === "backspace") {
-    return normalized;
-  }
-  if (normalized === "delete" || normalized === "home" || normalized === "end") {
-    return normalized;
-  }
-  if (normalized === "pageup" || normalized === "pagedown") return normalized;
-  return null;
-}
-
-function keybindingFromEvent(event: KeyboardEvent<HTMLInputElement>): string | null {
-  const keyToken = normalizeShortcutKeyToken(event.key);
-  if (!keyToken) return null;
-
-  const parts: string[] = [];
-  if (isMacPlatform(navigator.platform)) {
-    if (event.metaKey) parts.push("mod");
-    if (event.ctrlKey) parts.push("ctrl");
-  } else {
-    if (event.ctrlKey) parts.push("mod");
-    if (event.metaKey) parts.push("meta");
-  }
-  if (event.altKey) parts.push("alt");
-  if (event.shiftKey) parts.push("shift");
-  if (parts.length === 0) {
-    return null;
-  }
-  parts.push(keyToken);
-  return parts.join("+");
+  onAddScript: (input: NewProjectScriptInput) => Promise<ProjectScriptActionResult>;
+  onUpdateScript: (
+    scriptId: string,
+    input: NewProjectScriptInput,
+  ) => Promise<ProjectScriptActionResult>;
+  onDeleteScript: (scriptId: string) => Promise<ProjectScriptActionResult>;
 }
 
 export default function ProjectScriptsControl({
@@ -144,6 +118,7 @@ export default function ProjectScriptsControl({
   onRunScript,
   onAddScript,
   onUpdateScript,
+  onDeleteScript,
 }: ProjectScriptsControlProps) {
   const addScriptFormId = React.useId();
   const [editingScriptId, setEditingScriptId] = useState<string | null>(null);
@@ -154,7 +129,10 @@ export default function ProjectScriptsControl({
   const [iconPickerOpen, setIconPickerOpen] = useState(false);
   const [runOnWorktreeCreate, setRunOnWorktreeCreate] = useState(false);
   const [keybinding, setKeybinding] = useState("");
+  const [previewUrl, setPreviewUrl] = useState("");
+  const [autoOpenPreview, setAutoOpenPreview] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
 
   const primaryScript = useMemo(() => {
     if (preferredScriptId) {
@@ -174,7 +152,7 @@ export default function ProjectScriptsControl({
       setKeybinding("");
       return;
     }
-    const next = keybindingFromEvent(event);
+    const next = keybindingFromKeyboardEvent(event, navigator.platform);
     if (!next) return;
     setKeybinding(next);
   };
@@ -193,6 +171,7 @@ export default function ProjectScriptsControl({
     }
 
     setValidationError(null);
+    let payload: NewProjectScriptInput;
     try {
       const scriptIdForValidation =
         editingScriptId ??
@@ -204,23 +183,33 @@ export default function ProjectScriptsControl({
         keybinding,
         command: commandForProjectScript(scriptIdForValidation),
       });
-      const payload = {
+      const trimmedPreviewUrl = previewUrl.trim();
+      payload = {
         name: trimmedName,
         command: trimmedCommand,
         icon,
         runOnWorktreeCreate,
         keybinding: keybindingRule?.key ?? null,
+        previewUrl: trimmedPreviewUrl.length > 0 ? trimmedPreviewUrl : null,
+        autoOpenPreview: trimmedPreviewUrl.length > 0 ? autoOpenPreview : false,
       } satisfies NewProjectScriptInput;
-      if (editingScriptId) {
-        await onUpdateScript(editingScriptId, payload);
-      } else {
-        await onAddScript(payload);
-      }
-      setDialogOpen(false);
-      setIconPickerOpen(false);
     } catch (error) {
       setValidationError(error instanceof Error ? error.message : "Failed to save action.");
+      return;
     }
+
+    const result = editingScriptId
+      ? await onUpdateScript(editingScriptId, payload)
+      : await onAddScript(payload);
+    if (result._tag === "Failure") {
+      if (!isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        setValidationError(error instanceof Error ? error.message : "Failed to save action.");
+      }
+      return;
+    }
+    setDialogOpen(false);
+    setIconPickerOpen(false);
   };
 
   const openAddDialog = () => {
@@ -231,6 +220,8 @@ export default function ProjectScriptsControl({
     setIconPickerOpen(false);
     setRunOnWorktreeCreate(false);
     setKeybinding("");
+    setPreviewUrl("");
+    setAutoOpenPreview(false);
     setValidationError(null);
     setDialogOpen(true);
   };
@@ -243,26 +234,42 @@ export default function ProjectScriptsControl({
     setIconPickerOpen(false);
     setRunOnWorktreeCreate(script.runOnWorktreeCreate);
     setKeybinding(keybindingValueForCommand(keybindings, commandForProjectScript(script.id)) ?? "");
+    setPreviewUrl(script.previewUrl ?? "");
+    setAutoOpenPreview(script.autoOpenPreview ?? false);
     setValidationError(null);
     setDialogOpen(true);
   };
+
+  const confirmDeleteScript = useCallback(() => {
+    if (!editingScriptId) return;
+    setDeleteConfirmOpen(false);
+    setDialogOpen(false);
+    void onDeleteScript(editingScriptId);
+  }, [editingScriptId, onDeleteScript]);
 
   return (
     <>
       {primaryScript ? (
         <Group aria-label="Project scripts">
-          <Button
-            size="xs"
-            variant="outline"
-            onClick={() => onRunScript(primaryScript)}
-            title={`Run ${primaryScript.name}`}
-          >
-            <ScriptIcon icon={primaryScript.icon} />
-            <span className="sr-only @sm/header-actions:not-sr-only @sm/header-actions:ml-0.5">
-              {primaryScript.name}
-            </span>
-          </Button>
-          <GroupSeparator className="hidden @sm/header-actions:block" />
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  size="xs"
+                  variant="outline"
+                  aria-label={`Run ${primaryScript.name}`}
+                  onClick={() => onRunScript(primaryScript)}
+                />
+              }
+            >
+              <ScriptIcon icon={primaryScript.icon} />
+              <span className="sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5">
+                {primaryScript.name}
+              </span>
+            </TooltipTrigger>
+            <TooltipPopup side="top">Run {primaryScript.name}</TooltipPopup>
+          </Tooltip>
+          <GroupSeparator className="hidden @3xl/header-actions:block" />
           <Menu highlightItemOnHover={false}>
             <MenuTrigger
               render={<Button size="icon-xs" variant="outline" aria-label="Script actions" />}
@@ -321,12 +328,19 @@ export default function ProjectScriptsControl({
           </Menu>
         </Group>
       ) : (
-        <Button size="xs" variant="outline" onClick={openAddDialog} title="Add action">
-          <PlusIcon className="size-3.5" />
-          <span className="sr-only @sm/header-actions:not-sr-only @sm/header-actions:ml-0.5">
-            Add action
-          </span>
-        </Button>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button size="xs" variant="outline" aria-label="Add action" onClick={openAddDialog} />
+            }
+          >
+            <PlusIcon className="size-3.5" />
+            <span className="sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5">
+              Add action
+            </span>
+          </TooltipTrigger>
+          <TooltipPopup side="top">Add action</TooltipPopup>
+        </Tooltip>
       )}
 
       <Dialog
@@ -344,6 +358,8 @@ export default function ProjectScriptsControl({
           setIcon("play");
           setRunOnWorktreeCreate(false);
           setKeybinding("");
+          setPreviewUrl("");
+          setAutoOpenPreview(false);
           setValidationError(null);
         }}
         open={dialogOpen}
@@ -401,6 +417,7 @@ export default function ProjectScriptsControl({
                   </Popover>
                   <Input
                     id="script-name"
+                    autoFocus
                     placeholder="Test"
                     value={name}
                     onChange={(event) => setName(event.target.value)}
@@ -429,6 +446,18 @@ export default function ProjectScriptsControl({
                   onChange={(event) => setCommand(event.target.value)}
                 />
               </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="script-preview-url">Preview URL (optional)</Label>
+                <Input
+                  id="script-preview-url"
+                  placeholder="http://localhost:5173"
+                  value={previewUrl}
+                  onChange={(event) => setPreviewUrl(event.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Open this URL in the in-app preview when this action runs.
+                </p>
+              </div>
               <label className="flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2 text-sm">
                 <span>Run automatically on worktree creation</span>
                 <Switch
@@ -436,10 +465,32 @@ export default function ProjectScriptsControl({
                   onCheckedChange={(checked) => setRunOnWorktreeCreate(Boolean(checked))}
                 />
               </label>
+              <label
+                className={`flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2 text-sm ${
+                  previewUrl.trim().length === 0 ? "opacity-60" : ""
+                }`}
+              >
+                <span>Open preview automatically when this action runs</span>
+                <Switch
+                  checked={autoOpenPreview}
+                  disabled={previewUrl.trim().length === 0}
+                  onCheckedChange={(checked) => setAutoOpenPreview(Boolean(checked))}
+                />
+              </label>
               {validationError && <p className="text-sm text-destructive">{validationError}</p>}
             </form>
           </DialogPanel>
           <DialogFooter>
+            {isEditing && (
+              <Button
+                type="button"
+                variant="destructive-outline"
+                className="mr-auto"
+                onClick={() => setDeleteConfirmOpen(true)}
+              >
+                Delete
+              </Button>
+            )}
             <Button
               type="button"
               variant="outline"
@@ -455,6 +506,21 @@ export default function ProjectScriptsControl({
           </DialogFooter>
         </DialogPopup>
       </Dialog>
+
+      <AlertDialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
+        <AlertDialogPopup>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete action "{name}"?</AlertDialogTitle>
+            <AlertDialogDescription>This action cannot be undone.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+            <Button variant="destructive" onClick={confirmDeleteScript}>
+              Delete action
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogPopup>
+      </AlertDialog>
     </>
   );
 }

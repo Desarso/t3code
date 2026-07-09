@@ -5,7 +5,8 @@ import {
   OrchestrationSession,
   OrchestrationThread,
 } from "@t3tools/contracts";
-import { Effect, Schema } from "effect";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 
 import { toProjectorDecodeError, type OrchestrationProjectorDecodeError } from "./Errors.ts";
 import {
@@ -14,12 +15,14 @@ import {
   ProjectDeletedPayload,
   ProjectMetaUpdatedPayload,
   ThreadActivityAppendedPayload,
+  ThreadArchivedPayload,
   ThreadCreatedPayload,
   ThreadDeletedPayload,
   ThreadInteractionModeSetPayload,
   ThreadMetaUpdatedPayload,
   ThreadProposedPlanUpsertedPayload,
   ThreadRuntimeModeSetPayload,
+  ThreadUnarchivedPayload,
   ThreadRevertedPayload,
   ThreadSessionSetPayload,
   ThreadTurnDiffCompletedPayload,
@@ -35,6 +38,29 @@ function checkpointStatusToLatestTurnState(status: "ready" | "missing" | "error"
   return "completed" as const;
 }
 
+/**
+ * Turn state to settle a still-running latest turn with when its session
+ * leaves the "running" status, or null while the session is (re)starting or
+ * running and the turn must stay unsettled.
+ */
+function settledTurnStateForSessionStatus(
+  status: OrchestrationSession["status"],
+): "completed" | "interrupted" | "error" | null {
+  switch (status) {
+    case "idle":
+    case "ready":
+      return "completed";
+    case "error":
+      return "error";
+    case "interrupted":
+    case "stopped":
+      return "interrupted";
+    case "starting":
+    case "running":
+      return null;
+  }
+}
+
 function updateThread(
   threads: ReadonlyArray<OrchestrationThread>,
   threadId: ThreadId,
@@ -44,15 +70,14 @@ function updateThread(
 }
 
 function decodeForEvent<A>(
-  schema: Schema.Schema<A>,
+  schema: Schema.Decoder<A, never>,
   value: unknown,
   eventType: OrchestrationEvent["type"],
   field: string,
 ): Effect.Effect<A, OrchestrationProjectorDecodeError> {
-  return Effect.try({
-    try: () => Schema.decodeUnknownSync(schema as any)(value),
-    catch: (error) => toProjectorDecodeError(`${eventType}:${field}`)(error as Schema.SchemaError),
-  });
+  return Schema.decodeUnknownEffect(schema)(value).pipe(
+    Effect.mapError(toProjectorDecodeError(`${eventType}:${field}`)),
+  );
 }
 
 function retainThreadMessagesAfterRevert(
@@ -181,7 +206,7 @@ export function projectEvent(
             id: payload.projectId,
             title: payload.title,
             workspaceRoot: payload.workspaceRoot,
-            defaultModel: payload.defaultModel,
+            defaultModelSelection: payload.defaultModelSelection,
             scripts: payload.scripts,
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,
@@ -211,8 +236,8 @@ export function projectEvent(
                   ...(payload.workspaceRoot !== undefined
                     ? { workspaceRoot: payload.workspaceRoot }
                     : {}),
-                  ...(payload.defaultModel !== undefined
-                    ? { defaultModel: payload.defaultModel }
+                  ...(payload.defaultModelSelection !== undefined
+                    ? { defaultModelSelection: payload.defaultModelSelection }
                     : {}),
                   ...(payload.scripts !== undefined ? { scripts: payload.scripts } : {}),
                   updatedAt: payload.updatedAt,
@@ -252,7 +277,7 @@ export function projectEvent(
             id: payload.threadId,
             projectId: payload.projectId,
             title: payload.title,
-            model: payload.model,
+            modelSelection: payload.modelSelection,
             runtimeMode: payload.runtimeMode,
             interactionMode: payload.interactionMode,
             branch: payload.branch,
@@ -260,6 +285,7 @@ export function projectEvent(
             latestTurn: null,
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,
+            archivedAt: null,
             deletedAt: null,
             messages: [],
             activities: [],
@@ -289,13 +315,37 @@ export function projectEvent(
         })),
       );
 
+    case "thread.archived":
+      return decodeForEvent(ThreadArchivedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            archivedAt: payload.archivedAt,
+            updatedAt: payload.updatedAt,
+          }),
+        })),
+      );
+
+    case "thread.unarchived":
+      return decodeForEvent(ThreadUnarchivedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            archivedAt: null,
+            updatedAt: payload.updatedAt,
+          }),
+        })),
+      );
+
     case "thread.meta-updated":
       return decodeForEvent(ThreadMetaUpdatedPayload, event.payload, event.type, "payload").pipe(
         Effect.map((payload) => ({
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
             ...(payload.title !== undefined ? { title: payload.title } : {}),
-            ...(payload.model !== undefined ? { model: payload.model } : {}),
+            ...(payload.modelSelection !== undefined
+              ? { modelSelection: payload.modelSelection }
+              : {}),
             ...(payload.branch !== undefined ? { branch: payload.branch } : {}),
             ...(payload.worktreePath !== undefined ? { worktreePath: payload.worktreePath } : {}),
             updatedAt: payload.updatedAt,
@@ -304,12 +354,7 @@ export function projectEvent(
       );
 
     case "thread.runtime-mode-set":
-      return decodeForEvent(
-        ThreadRuntimeModeSetPayload,
-        event.payload,
-        event.type,
-        "payload",
-      ).pipe(
+      return decodeForEvent(ThreadRuntimeModeSetPayload, event.payload, event.type, "payload").pipe(
         Effect.map((payload) => ({
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
@@ -416,6 +461,9 @@ export function projectEvent(
           "session",
         );
 
+        // Leaving the "running" session status is the turn-end signal: settle
+        // a still-running latest turn so its duration reflects the whole turn.
+        const settledTurnState = settledTurnStateForSessionStatus(session.status);
         return {
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
@@ -439,7 +487,18 @@ export function projectEvent(
                         ? thread.latestTurn.assistantMessageId
                         : null,
                   }
-                : thread.latestTurn,
+                : thread.latestTurn !== null &&
+                    thread.latestTurn.state === "running" &&
+                    settledTurnState !== null
+                  ? {
+                      ...thread.latestTurn,
+                      state: settledTurnState,
+                      // A running turn's completedAt can only hold a mid-turn
+                      // placeholder checkpoint timestamp — the session leaving
+                      // "running" is the authoritative turn end.
+                      completedAt: session.updatedAt,
+                    }
+                  : thread.latestTurn,
             updatedAt: event.occurredAt,
           }),
         };
@@ -505,6 +564,16 @@ export function projectEvent(
           "checkpoint",
         );
 
+        // Do not let a placeholder (status "missing") overwrite a checkpoint
+        // that has already been captured with a real git ref (status "ready").
+        // ProviderRuntimeIngestion may fire multiple turn.diff.updated events
+        // per turn; without this guard later placeholders would clobber the
+        // real capture dispatched by CheckpointReactor.
+        const existing = thread.checkpoints.find((entry) => entry.turnId === checkpoint.turnId);
+        if (existing && existing.status !== "missing" && checkpoint.status === "missing") {
+          return nextBase;
+        }
+
         const checkpoints = [
           ...thread.checkpoints.filter((entry) => entry.turnId !== checkpoint.turnId),
           checkpoint,
@@ -512,24 +581,31 @@ export function projectEvent(
           .toSorted((left, right) => left.checkpointTurnCount - right.checkpointTurnCount)
           .slice(-MAX_THREAD_CHECKPOINTS);
 
+        // Mid-turn diff updates produce placeholder checkpoints; record the
+        // checkpoint, but don't settle a turn its session is still running.
+        const turnStillRunning =
+          thread.session?.status === "running" && thread.session.activeTurnId === payload.turnId;
+
         return {
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
             checkpoints,
-            latestTurn: {
-              turnId: payload.turnId,
-              state: checkpointStatusToLatestTurnState(payload.status),
-              requestedAt:
-                thread.latestTurn?.turnId === payload.turnId
-                  ? thread.latestTurn.requestedAt
-                  : payload.completedAt,
-              startedAt:
-                thread.latestTurn?.turnId === payload.turnId
-                  ? (thread.latestTurn.startedAt ?? payload.completedAt)
-                  : payload.completedAt,
-              completedAt: payload.completedAt,
-              assistantMessageId: payload.assistantMessageId,
-            },
+            latestTurn: turnStillRunning
+              ? thread.latestTurn
+              : {
+                  turnId: payload.turnId,
+                  state: checkpointStatusToLatestTurnState(payload.status),
+                  requestedAt:
+                    thread.latestTurn?.turnId === payload.turnId
+                      ? thread.latestTurn.requestedAt
+                      : payload.completedAt,
+                  startedAt:
+                    thread.latestTurn?.turnId === payload.turnId
+                      ? (thread.latestTurn.startedAt ?? payload.completedAt)
+                      : payload.completedAt,
+                  completedAt: payload.completedAt,
+                  assistantMessageId: payload.assistantMessageId,
+                },
             updatedAt: event.occurredAt,
           }),
         };

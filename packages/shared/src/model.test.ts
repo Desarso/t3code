@@ -1,69 +1,146 @@
-import { describe, expect, it } from "vitest";
-import { DEFAULT_MODEL_BY_PROVIDER, MODEL_OPTIONS_BY_PROVIDER } from "@t3tools/contracts";
+import { describe, expect, it } from "vite-plus/test";
+import { ProviderInstanceId, type ModelCapabilities } from "@t3tools/contracts";
 
 import {
-  getDefaultModel,
-  getDefaultReasoningEffort,
-  getModelOptions,
-  getReasoningEffortOptions,
-  normalizeModelSlug,
-  resolveModelSlug,
-} from "./model";
+  buildProviderOptionSelectionsFromDescriptors,
+  createModelCapabilities,
+  createModelSelection,
+  getModelSelectionBooleanOptionValue,
+  getModelSelectionStringOptionValue,
+  getProviderOptionDescriptors,
+  getProviderOptionBooleanSelectionValue,
+  getProviderOptionStringSelectionValue,
+} from "./model.ts";
 
-describe("normalizeModelSlug", () => {
-  it("maps known aliases to canonical slugs", () => {
-    expect(normalizeModelSlug("5.3")).toBe("gpt-5.3-codex");
-    expect(normalizeModelSlug("gpt-5.3")).toBe("gpt-5.3-codex");
-  });
-
-  it("returns null for empty or missing values", () => {
-    expect(normalizeModelSlug("")).toBeNull();
-    expect(normalizeModelSlug("   ")).toBeNull();
-    expect(normalizeModelSlug(null)).toBeNull();
-    expect(normalizeModelSlug(undefined)).toBeNull();
-  });
-
-  it("preserves non-aliased model slugs", () => {
-    expect(normalizeModelSlug("gpt-5.2")).toBe("gpt-5.2");
-    expect(normalizeModelSlug("gpt-5.2-codex")).toBe("gpt-5.2-codex");
-  });
-
-  it("does not leak prototype properties as aliases", () => {
-    expect(normalizeModelSlug("toString")).toBe("toString");
-    expect(normalizeModelSlug("constructor")).toBe("constructor");
-  });
+const codexCaps: ModelCapabilities = createModelCapabilities({
+  optionDescriptors: [
+    {
+      id: "reasoningEffort",
+      label: "Reasoning",
+      type: "select",
+      options: [
+        { id: "xhigh", label: "Extra High" },
+        { id: "high", label: "High", isDefault: true },
+      ],
+      currentValue: "high",
+    },
+    {
+      id: "fastMode",
+      label: "Fast Mode",
+      type: "boolean",
+    },
+  ],
 });
 
-describe("resolveModelSlug", () => {
-  it("returns default only when the model is missing", () => {
-    expect(resolveModelSlug(undefined)).toBe(DEFAULT_MODEL_BY_PROVIDER.codex);
-    expect(resolveModelSlug(null)).toBe(DEFAULT_MODEL_BY_PROVIDER.codex);
-  });
-
-  it("preserves unknown custom models", () => {
-    expect(resolveModelSlug("gpt-4.1")).toBe(DEFAULT_MODEL_BY_PROVIDER.codex);
-    expect(resolveModelSlug("custom/internal-model")).toBe(DEFAULT_MODEL_BY_PROVIDER.codex);
-  });
-
-  it("resolves only supported model options", () => {
-    for (const model of MODEL_OPTIONS_BY_PROVIDER.codex) {
-      expect(resolveModelSlug(model.slug)).toBe(model.slug);
-    }
-  });
-  it("keeps codex defaults for backward compatibility", () => {
-    expect(getDefaultModel()).toBe(DEFAULT_MODEL_BY_PROVIDER.codex);
-    expect(getModelOptions()).toEqual(MODEL_OPTIONS_BY_PROVIDER.codex);
-  });
+const claudeCaps: ModelCapabilities = createModelCapabilities({
+  optionDescriptors: [
+    {
+      id: "effort",
+      label: "Reasoning",
+      type: "select",
+      options: [
+        { id: "medium", label: "Medium" },
+        { id: "high", label: "High", isDefault: true },
+        { id: "ultrathink", label: "Ultrathink" },
+      ],
+      currentValue: "high",
+      promptInjectedValues: ["ultrathink"],
+    },
+    {
+      id: "contextWindow",
+      label: "Context Window",
+      type: "select",
+      options: [
+        { id: "200k", label: "200k" },
+        { id: "1m", label: "1M", isDefault: true },
+      ],
+      currentValue: "1m",
+    },
+  ],
 });
 
-describe("getReasoningEffortOptions", () => {
-  it("returns codex reasoning options for codex", () => {
-    expect(getReasoningEffortOptions("codex")).toEqual(["xhigh", "high", "medium", "low"]);
+describe("descriptor helpers", () => {
+  it("applies selection values to capability descriptors", () => {
+    expect(
+      getProviderOptionDescriptors({
+        caps: claudeCaps,
+        selections: [
+          { id: "effort", value: "medium" },
+          { id: "contextWindow", value: "200k" },
+        ],
+      }),
+    ).toEqual([
+      {
+        id: "effort",
+        label: "Reasoning",
+        type: "select",
+        options: [
+          { id: "medium", label: "Medium" },
+          { id: "high", label: "High", isDefault: true },
+          { id: "ultrathink", label: "Ultrathink" },
+        ],
+        currentValue: "medium",
+        promptInjectedValues: ["ultrathink"],
+      },
+      {
+        id: "contextWindow",
+        label: "Context Window",
+        type: "select",
+        options: [
+          { id: "200k", label: "200k" },
+          { id: "1m", label: "1M", isDefault: true },
+        ],
+        currentValue: "200k",
+      },
+    ]);
   });
-});
 
-describe("getDefaultReasoningEffort", () => {
-  it("returns provider-scoped defaults", () => {
-    expect(getDefaultReasoningEffort("codex")).toBe("high");
+  it("builds wire-format option selections from descriptors", () => {
+    const descriptors = getProviderOptionDescriptors({
+      caps: codexCaps,
+      selections: [
+        { id: "reasoningEffort", value: "high" },
+        { id: "fastMode", value: true },
+      ],
+    });
+
+    expect(buildProviderOptionSelectionsFromDescriptors(descriptors)).toEqual([
+      { id: "reasoningEffort", value: "high" },
+      { id: "fastMode", value: true },
+    ]);
+  });
+
+  it("stores option selection arrays in model selections", () => {
+    expect(
+      createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.4", [
+        { id: "reasoningEffort", value: "high" },
+        { id: "fastMode", value: true },
+      ]),
+    ).toEqual({
+      instanceId: "codex",
+      model: "gpt-5.4",
+      options: [
+        { id: "reasoningEffort", value: "high" },
+        { id: "fastMode", value: true },
+      ],
+    });
+  });
+
+  it("reads typed option selection values", () => {
+    const selection = createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.4", [
+      { id: "reasoningEffort", value: "high" },
+      { id: "fastMode", value: true },
+    ]);
+
+    expect(getProviderOptionStringSelectionValue(selection.options, "reasoningEffort")).toBe(
+      "high",
+    );
+    expect(getProviderOptionStringSelectionValue(selection.options, "fastMode")).toBeUndefined();
+    expect(getProviderOptionBooleanSelectionValue(selection.options, "fastMode")).toBe(true);
+    expect(
+      getProviderOptionBooleanSelectionValue(selection.options, "reasoningEffort"),
+    ).toBeUndefined();
+    expect(getModelSelectionStringOptionValue(selection, "reasoningEffort")).toBe("high");
+    expect(getModelSelectionBooleanOptionValue(selection, "fastMode")).toBe(true);
   });
 });
