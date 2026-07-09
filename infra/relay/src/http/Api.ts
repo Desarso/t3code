@@ -1,4 +1,4 @@
-import { createClerkClient, verifyToken } from "@clerk/backend";
+import { createRemoteJWKSet, jwtVerify } from "jose";
 import { sql as drizzleSql } from "drizzle-orm";
 import * as Crypto from "effect/Crypto";
 import * as Context from "effect/Context";
@@ -241,15 +241,15 @@ export const relayClientAuthLayer = Layer.effect(
         const verified = yield* verifyRelayClientBearerToken(config, token).pipe(
           Effect.tapError((error) =>
             Effect.annotateCurrentSpan(
-              "relay.auth.clerk_verification_failure",
-              clerkVerificationFailureReason(error.cause),
+              "relay.auth.bearer_verification_failure",
+              bearerVerificationFailureReason(error.cause),
             ),
           ),
           Effect.catch(() => relayAuthInvalidError("invalid_bearer")),
         );
         if (!verified.sub) {
           yield* Effect.annotateCurrentSpan({
-            "relay.auth.clerk_verification_failure": "missing_subject",
+            "relay.auth.bearer_verification_failure": "missing_subject",
           });
           return yield* relayAuthInvalidError("invalid_bearer");
         }
@@ -632,7 +632,7 @@ export const tokenApi = HttpApiBuilder.group(
           scope: args.payload.scope,
         });
         yield* Effect.annotateCurrentSpan({
-          "relay.auth.mode": "clerk_bearer_token_exchange",
+          "relay.auth.mode": "google_id_token_exchange",
           "relay.oauth.client_id": args.payload.client_id,
           "relay.oauth.scopes": args.payload.scope,
         });
@@ -640,12 +640,11 @@ export const tokenApi = HttpApiBuilder.group(
           return yield* new HttpApiError.Unauthorized({});
         }
 
-        const verified = yield* verifyClerkBearerToken(config, args.payload.subject_token).pipe(
+        // verifyGoogleIdToken enforces signature, issuer, audience, verified
+        // email + allowlist, and a non-empty subject, so `sub` is guaranteed.
+        const verified = yield* verifyGoogleIdToken(config, args.payload.subject_token).pipe(
           Effect.catch(() => relayAuthInvalidError("invalid_bearer")),
         );
-        if (!verified.sub || !hasExpectedClerkAudience(verified.aud, config.clerkJwtAudience)) {
-          return yield* relayAuthInvalidError("invalid_bearer");
-        }
         const proofKeyThumbprint = yield* requireDpopProof().pipe(
           Effect.provideService(DpopProofs.DpopProofReplay, dpopProofs),
         );
@@ -914,17 +913,18 @@ export const serverApi = HttpApiBuilder.group(
   }),
 );
 
-class ClerkTokenVerificationFailed extends Schema.TaggedErrorClass<ClerkTokenVerificationFailed>()(
-  "ClerkTokenVerificationFailed",
+class BearerTokenVerificationFailed extends Schema.TaggedErrorClass<BearerTokenVerificationFailed>()(
+  "BearerTokenVerificationFailed",
   {
     cause: Schema.Defect(),
   },
 ) {
   override get message(): string {
-    return "Clerk token verification failed";
+    return "Bearer token verification failed";
   }
 }
 
+const isBearerTokenVerificationFailed = Schema.is(BearerTokenVerificationFailed);
 const isHttpUnauthorized = Schema.is(HttpApiError.Unauthorized);
 
 const currentTraceId = Effect.currentParentSpan.pipe(
@@ -1064,18 +1064,26 @@ function safeAuthFailureReason(value: string): string {
   return /^[a-z0-9._-]+$/i.test(value) ? value : "unknown";
 }
 
-function clerkVerificationFailureReason(cause: unknown): string {
-  if (
-    cause instanceof Error &&
-    (cause.message.startsWith("Invalid JWT audience claim ") ||
-      cause.message.startsWith("Invalid JWT audience claim array "))
-  ) {
-    return "audience_mismatch";
+function bearerVerificationFailureReason(cause: unknown): string {
+  // jose surfaces a `claim` (e.g. "aud"/"iss") plus a stable error `code`
+  // (e.g. ERR_JWT_CLAIM_VALIDATION_FAILED / ERR_JWT_EXPIRED) for validation
+  // failures; prefer those, then any explicit reason string, then the name.
+  if (typeof cause === "object" && cause !== null && "claim" in cause) {
+    const claim = (cause as { readonly claim?: unknown }).claim;
+    if (typeof claim === "string" && claim.length > 0) {
+      return safeAuthFailureReason(`claim_${claim}`);
+    }
   }
   if (typeof cause === "object" && cause !== null && "reason" in cause) {
     const reason = (cause as { readonly reason?: unknown }).reason;
     if (typeof reason === "string" && reason.length > 0) {
       return safeAuthFailureReason(reason);
+    }
+  }
+  if (typeof cause === "object" && cause !== null && "code" in cause) {
+    const code = (cause as { readonly code?: unknown }).code;
+    if (typeof code === "string" && code.length > 0) {
+      return safeAuthFailureReason(code);
     }
   }
   if (cause instanceof Error && cause.name) {
@@ -1084,72 +1092,56 @@ function clerkVerificationFailureReason(cause: unknown): string {
   return "unknown";
 }
 
-function hasExpectedClerkAudience(audience: unknown, expectedAudience: string): boolean {
-  return typeof audience === "string"
-    ? audience === expectedAudience
-    : Array.isArray(audience) &&
-        audience.some((entry) => typeof entry === "string" && entry === expectedAudience);
+const GOOGLE_OIDC_ISSUERS = ["https://accounts.google.com", "accounts.google.com"];
+const GOOGLE_JWKS = createRemoteJWKSet(new URL("https://www.googleapis.com/oauth2/v3/certs"));
+
+interface VerifiedGoogleIdentity {
+  readonly sub: string;
+  readonly email: string;
 }
 
-function verifyClerkBearerToken(
+// Verify a Google OIDC ID token: signature against Google's JWKS, issuer and
+// audience (one of our OAuth client IDs), then gate on the verified email
+// allowlist so only the owner's Google account can use this self-hosted relay.
+function verifyGoogleIdToken(
   config: RelayConfiguration.RelayConfiguration["Service"],
   token: string,
 ) {
   return Effect.tryPromise({
-    try: () =>
-      verifyToken(token, {
-        secretKey: Redacted.value(config.clerkSecretKey),
-        audience: config.clerkJwtAudience,
-      }),
-    catch: (cause) => new ClerkTokenVerificationFailed({ cause }),
+    try: async (): Promise<VerifiedGoogleIdentity> => {
+      const { payload } = await jwtVerify(token, GOOGLE_JWKS, {
+        issuer: GOOGLE_OIDC_ISSUERS,
+        audience: config.googleClientIds as string[],
+      });
+      const sub = typeof payload.sub === "string" ? payload.sub : undefined;
+      const email = typeof payload.email === "string" ? payload.email.toLowerCase() : undefined;
+      const emailVerified = payload.email_verified === true;
+      if (!sub) {
+        throw new BearerTokenVerificationFailed({ cause: "missing_subject" });
+      }
+      if (!email || !emailVerified) {
+        throw new BearerTokenVerificationFailed({ cause: "email_unverified" });
+      }
+      if (!config.googleAllowedEmails.includes(email)) {
+        throw new BearerTokenVerificationFailed({ cause: "email_not_allowed" });
+      }
+      return { sub, email };
+    },
+    catch: (cause) =>
+      isBearerTokenVerificationFailed(cause) ? cause : new BearerTokenVerificationFailed({ cause }),
   }).pipe(
-    Effect.withSpan("verify_clerk_bearer_token", {
+    Effect.withSpan("verify_google_id_token", {
       attributes: { "relay.auth.token_length": token.length },
     }),
   );
-}
-
-function verifyClerkOAuthBearerToken(
-  config: RelayConfiguration.RelayConfiguration["Service"],
-  token: string,
-) {
-  return Effect.tryPromise({
-    try: async () => {
-      const client = createClerkClient({
-        secretKey: Redacted.value(config.clerkSecretKey),
-        publishableKey: config.clerkPublishableKey,
-      });
-      const state = await client.authenticateRequest(
-        new Request(config.relayIssuer, {
-          headers: { authorization: `Bearer ${token}` },
-        }),
-        { acceptsToken: "oauth_token" },
-      );
-      const auth = state.toAuth();
-      if (!state.isAuthenticated || !auth.userId) {
-        throw new Error("Clerk OAuth token is not authenticated.");
-      }
-      return { sub: auth.userId };
-    },
-    catch: (cause) => new ClerkTokenVerificationFailed({ cause }),
-  });
 }
 
 export function verifyRelayClientBearerToken(
   config: RelayConfiguration.RelayConfiguration["Service"],
   token: string,
 ) {
-  return verifyClerkBearerToken(config, token).pipe(
-    Effect.flatMap((verified) =>
-      verified.sub && hasExpectedClerkAudience(verified.aud, config.clerkJwtAudience)
-        ? Effect.succeed({ sub: verified.sub, mode: "clerk_session_bearer" as const })
-        : Effect.fail(new ClerkTokenVerificationFailed({ cause: "missing_relay_audience" })),
-    ),
-    Effect.catch(() =>
-      verifyClerkOAuthBearerToken(config, token).pipe(
-        Effect.map((verified) => ({ ...verified, mode: "clerk_oauth_bearer" as const })),
-      ),
-    ),
+  return verifyGoogleIdToken(config, token).pipe(
+    Effect.map((verified) => ({ sub: verified.sub, mode: "google_id_token" as const })),
   );
 }
 

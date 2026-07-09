@@ -57,6 +57,14 @@ import * as EnvironmentPublishSignatures from "./environments/EnvironmentPublish
 import * as ManagedEndpointProvider from "./environments/ManagedEndpointProvider.ts";
 import * as MobileRegistrations from "./agentActivity/MobileRegistrations.ts";
 
+// Split a comma/whitespace-separated env value (e.g. GOOGLE_CLIENT_IDS,
+// GOOGLE_ALLOWED_EMAILS) into a trimmed, non-empty list.
+const parseCsvConfigList = (value: string): ReadonlyArray<string> =>
+  value
+    .split(/[,\s]+/)
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+
 const webcryptoLayer = Layer.succeed(
   Crypto.Crypto,
   Crypto.make({
@@ -134,9 +142,12 @@ export default class Api extends Cloudflare.Worker<Api>()(
     const axiomIngestToken = yield* observability.workerIngestToken.token;
     const axiomTracesEndpoint = yield* observability.traces.otelTracesEndpoint;
 
-    const clerkSecretKey = yield* Config.redacted("CLERK_SECRET_KEY");
-    const clerkPublishableKey = yield* Config.string("CLERK_PUBLISHABLE_KEY");
-    const clerkJwtAudience = yield* Config.string("CLERK_JWT_AUDIENCE");
+    const googleClientIds = yield* Config.string("GOOGLE_CLIENT_IDS").pipe(
+      Config.map(parseCsvConfigList),
+    );
+    const googleAllowedEmails = yield* Config.string("GOOGLE_ALLOWED_EMAILS").pipe(
+      Config.map((value) => parseCsvConfigList(value).map((entry) => entry.toLowerCase())),
+    );
 
     const cloudMintPrivateKey = yield* cloudMintKeyPair.privateKey;
     const cloudMintPublicKey = yield* cloudMintKeyPair.publicKey;
@@ -165,9 +176,8 @@ export default class Api extends Cloudflare.Worker<Api>()(
           privateKey: apnsPrivateKey,
         },
         apnsDeliveryJobSigningSecret: yield* apnsDeliveryJobSigningSecret,
-        clerkSecretKey,
-        clerkPublishableKey,
-        clerkJwtAudience,
+        googleClientIds,
+        googleAllowedEmails,
         cloudMintPrivateKey: yield* cloudMintPrivateKey,
         cloudMintPublicKey: yield* cloudMintPublicKey,
         managedEndpointBaseDomain: yield* managedEndpointZoneName,

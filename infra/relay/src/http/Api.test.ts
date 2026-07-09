@@ -1,4 +1,4 @@
-import { createClerkClient, verifyToken } from "@clerk/backend";
+import { jwtVerify } from "jose";
 import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import * as Context from "effect/Context";
@@ -29,9 +29,9 @@ import {
 import * as RelayConfiguration from "../Config.ts";
 import * as EnvironmentCredentials from "../environments/EnvironmentCredentials.ts";
 
-vi.mock("@clerk/backend", () => ({
-  createClerkClient: vi.fn(),
-  verifyToken: vi.fn(),
+vi.mock("jose", () => ({
+  createRemoteJWKSet: vi.fn(() => vi.fn()),
+  jwtVerify: vi.fn(),
 }));
 
 const relaySettings: RelayConfiguration.RelayConfiguration["Service"] = {
@@ -43,9 +43,8 @@ const relaySettings: RelayConfiguration.RelayConfiguration["Service"] = {
     bundleId: "com.example.t3",
     environment: "sandbox",
   },
-  clerkSecretKey: Redacted.make("clerk-secret-key"),
-  clerkPublishableKey: "pk_test_test",
-  clerkJwtAudience: "t3-code-relay",
+  googleClientIds: ["web-client-id.apps.googleusercontent.com"],
+  googleAllowedEmails: ["owner@example.test"],
   apnsDeliveryJobSigningSecret: Redacted.make("apns-delivery-secret"),
   cloudMintPrivateKey: Redacted.make("cloud-mint-private-key"),
   cloudMintPublicKey: "cloud-mint-public-key",
@@ -54,58 +53,43 @@ const relaySettings: RelayConfiguration.RelayConfiguration["Service"] = {
 };
 
 describe("relay client authentication", () => {
-  it.effect("preserves the existing Clerk session JWT path", () =>
+  it.effect("accepts a Google ID token for the allowlisted account", () =>
     Effect.gen(function* () {
-      vi.mocked(verifyToken).mockResolvedValue({
-        sub: "user_session",
-        aud: relaySettings.clerkJwtAudience,
+      vi.mocked(jwtVerify).mockResolvedValue({
+        payload: { sub: "google_sub_123", email: "owner@example.test", email_verified: true },
       } as never);
 
-      expect(yield* verifyRelayClientBearerToken(relaySettings, "session-token")).toEqual({
-        sub: "user_session",
-        mode: "clerk_session_bearer",
+      expect(yield* verifyRelayClientBearerToken(relaySettings, "id-token")).toEqual({
+        sub: "google_sub_123",
+        mode: "google_id_token",
       });
-      expect(verifyToken).toHaveBeenCalledWith("session-token", {
-        secretKey: "clerk-secret-key",
-        audience: relaySettings.clerkJwtAudience,
+      expect(jwtVerify).toHaveBeenCalledWith("id-token", expect.anything(), {
+        issuer: ["https://accounts.google.com", "accounts.google.com"],
+        audience: relaySettings.googleClientIds,
       });
-      expect(createClerkClient).not.toHaveBeenCalled();
-    }).pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          vi.mocked(verifyToken).mockReset();
-          vi.mocked(createClerkClient).mockReset();
-        }),
-      ),
-    ),
+    }).pipe(Effect.ensuring(Effect.sync(() => vi.mocked(jwtVerify).mockReset()))),
   );
 
-  it.effect("falls back to Clerk OAuth token verification for the headless CLI", () =>
+  it.effect("rejects a verified Google account outside the email allowlist", () =>
     Effect.gen(function* () {
-      vi.mocked(verifyToken).mockRejectedValue(new Error("not a session JWT"));
-      vi.mocked(createClerkClient).mockReturnValue({
-        authenticateRequest: vi.fn().mockResolvedValue({
-          isAuthenticated: true,
-          toAuth: () => ({ userId: "user_oauth" }),
-        }),
+      vi.mocked(jwtVerify).mockResolvedValue({
+        payload: { sub: "google_sub_x", email: "stranger@example.test", email_verified: true },
       } as never);
 
-      expect(yield* verifyRelayClientBearerToken(relaySettings, "oauth-token")).toEqual({
-        sub: "user_oauth",
-        mode: "clerk_oauth_bearer",
-      });
-      expect(createClerkClient).toHaveBeenCalledWith({
-        secretKey: "clerk-secret-key",
-        publishableKey: "pk_test_test",
-      });
-    }).pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          vi.mocked(verifyToken).mockReset();
-          vi.mocked(createClerkClient).mockReset();
-        }),
-      ),
-    ),
+      const error = yield* Effect.flip(verifyRelayClientBearerToken(relaySettings, "id-token"));
+      expect(Predicate.isTagged(error, "BearerTokenVerificationFailed")).toBe(true);
+    }).pipe(Effect.ensuring(Effect.sync(() => vi.mocked(jwtVerify).mockReset()))),
+  );
+
+  it.effect("rejects a Google token whose email is unverified", () =>
+    Effect.gen(function* () {
+      vi.mocked(jwtVerify).mockResolvedValue({
+        payload: { sub: "google_sub_y", email: "owner@example.test", email_verified: false },
+      } as never);
+
+      const error = yield* Effect.flip(verifyRelayClientBearerToken(relaySettings, "id-token"));
+      expect(Predicate.isTagged(error, "BearerTokenVerificationFailed")).toBe(true);
+    }).pipe(Effect.ensuring(Effect.sync(() => vi.mocked(jwtVerify).mockReset()))),
   );
 });
 

@@ -19,9 +19,11 @@ export class RelayConfiguration extends Context.Service<
   {
     readonly relayIssuer: string;
     readonly apns: ApnsCredentials;
-    readonly clerkSecretKey: Redacted.Redacted<string>;
-    readonly clerkPublishableKey: string;
-    readonly clerkJwtAudience: string;
+    // Google OIDC: accepted `aud` client IDs (web/android/ios clients all belong
+    // to us) and the allowlist of verified `email` values permitted to use this
+    // relay (single-user self-host — normally just the owner's Google account).
+    readonly googleClientIds: readonly string[];
+    readonly googleAllowedEmails: readonly string[];
     readonly apnsDeliveryJobSigningSecret: Redacted.Redacted<string>;
     readonly cloudMintPrivateKey: Redacted.Redacted<string>;
     readonly cloudMintPublicKey: string;
