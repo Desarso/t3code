@@ -80,6 +80,7 @@ patchedDependencies:
   react-native-keyboard-controller@1.21.13: 20be72c84d74253acdcfefbc6defe36dc396944f1a44cab2bdd0e3cd572ae008
   react-native-nitro-modules@0.35.9: 825622aae63a8fb5b904f3c77908a0e216261d727ea171709f2c0b6088422675
   react-native-screens@4.25.2: 47a07b0849ebf1ae454be3cb9fde7700c763584afa403d381e11e06e36187de8
+  react-native-shiki-engine@0.3.12: fce46065567c58c94930a07c7b18a5f96b34a85e29aa0db91e6b662c537d4716
 
 importers:
 
@@ -383,7 +384,7 @@ importers:
         version: 4.25.2(patch_hash=47a07b0849ebf1ae454be3cb9fde7700c763584afa403d381e11e06e36187de8)(react-native@0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.85.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3)
       react-native-shiki-engine:
         specifier: ^0.3.12
-        version: 0.3.12(react-native@0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.85.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3)
+        version: 0.3.12(patch_hash=fce46065567c58c94930a07c7b18a5f96b34a85e29aa0db91e6b662c537d4716)(react-native@0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.85.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3)
       react-native-svg:
         specifier: 15.15.4
         version: 15.15.4(react-native@0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.85.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3)
@@ -19624,7 +19625,7 @@ snapshots:
       warn-once: 0.1.1
     optional: true
 
-  react-native-shiki-engine@0.3.12(react-native@0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.85.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3):
+  react-native-shiki-engine@0.3.12(patch_hash=fce46065567c58c94930a07c7b18a5f96b34a85e29aa0db91e6b662c537d4716)(react-native@0.85.3(@babel/core@7.29.7)(@react-native/metro-config@0.85.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.2.16)(bufferutil@4.1.0)(react@19.2.3)(utf-8-validate@6.0.6))(react@19.2.3):
     dependencies:
       '@shikijs/types': 4.3.0
       '@shikijs/vscode-textmate': 10.0.2
