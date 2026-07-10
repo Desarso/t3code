@@ -3,7 +3,10 @@ FROM node:24.13.1-bookworm-slim
 ENV PNPM_HOME=/pnpm
 ENV PATH=/pnpm:$PATH
 
-RUN corepack enable
+RUN apt-get update \
+  && apt-get install --yes --no-install-recommends curl \
+  && rm -rf /var/lib/apt/lists/* \
+  && corepack enable
 
 WORKDIR /app
 
