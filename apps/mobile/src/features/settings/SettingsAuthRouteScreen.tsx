@@ -5,18 +5,18 @@ import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useEffect } from "react";
 import { View } from "react-native";
 
-import { hasCloudPublicConfig } from "../cloud/publicConfig";
+import { hasClerkCloudPublicConfig } from "../cloud/publicConfig";
 
 export function SettingsAuthRouteScreen() {
   const navigation = useNavigation();
 
   useEffect(() => {
-    if (!hasCloudPublicConfig()) {
+    if (!hasClerkCloudPublicConfig()) {
       navigation.dispatch(StackActions.replace("Settings"));
     }
   }, [navigation]);
 
-  return hasCloudPublicConfig() ? <ConfiguredSettingsAuthRouteScreen /> : null;
+  return hasClerkCloudPublicConfig() ? <ConfiguredSettingsAuthRouteScreen /> : null;
 }
 
 function ConfiguredSettingsAuthRouteScreen() {

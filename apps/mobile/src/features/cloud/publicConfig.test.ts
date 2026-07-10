@@ -2,9 +2,11 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   CloudPublicConfigMissingError,
+  hasCloudPublicConfig,
   hasTracingPublicConfig,
   resolveCloudPublicConfig,
   resolveRelayClerkTokenOptions,
+  resolveRelayTokenProvider,
 } from "./publicConfig";
 
 vi.mock("expo-constants", () => ({
@@ -24,12 +26,14 @@ describe("resolveCloudPublicConfig", () => {
 
   it("returns no cloud configuration for an unconfigured build", () => {
     expect(resolveCloudPublicConfig({})).toEqual({
+      authMode: null,
       clerk: {
         publishableKey: null,
         jwtTemplate: null,
       },
       relay: {
         url: null,
+        personalAccessToken: null,
       },
       observability: {
         tracesUrl: null,
@@ -43,7 +47,10 @@ describe("resolveCloudPublicConfig", () => {
     expect(
       resolveCloudPublicConfig({
         clerk: { publishableKey: "  pk_test_example  ", jwtTemplate: "  t3-relay  " },
-        relay: { url: " https://relay.example.test/// " },
+        relay: {
+          url: " https://relay.example.test/// ",
+          personalAccessToken: " personal-secret ",
+        },
         observability: {
           tracesUrl: " https://api.axiom.co/v1/traces ",
           tracesDataset: " mobile-traces ",
@@ -51,12 +58,14 @@ describe("resolveCloudPublicConfig", () => {
         },
       }),
     ).toEqual({
+      authMode: "personal-access-token",
       clerk: {
         publishableKey: "pk_test_example",
         jwtTemplate: "t3-relay",
       },
       relay: {
         url: "https://relay.example.test",
+        personalAccessToken: "personal-secret",
       },
       observability: {
         tracesUrl: "https://api.axiom.co/v1/traces",
@@ -73,12 +82,14 @@ describe("resolveCloudPublicConfig", () => {
         relay: { url: "http://relay.example.test" },
       }),
     ).toEqual({
+      authMode: null,
       clerk: {
         publishableKey: "pk_test_example",
         jwtTemplate: "t3-relay",
       },
       relay: {
         url: null,
+        personalAccessToken: null,
       },
       observability: {
         tracesUrl: null,
@@ -86,6 +97,19 @@ describe("resolveCloudPublicConfig", () => {
         tracesToken: null,
       },
     });
+  });
+
+  it("enables a self-hosted relay without Clerk configuration", async () => {
+    const config = resolveCloudPublicConfig({
+      relay: {
+        url: "https://relay.example.test",
+        personalAccessToken: "personal-secret",
+      },
+    });
+
+    expect(hasCloudPublicConfig(config)).toBe(true);
+    expect(config.authMode).toBe("personal-access-token");
+    expect(await resolveRelayTokenProvider(config)()).toBe("personal-secret");
   });
 
   it("rejects an insecure traces URL", () => {

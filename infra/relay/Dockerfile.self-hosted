@@ -1,0 +1,18 @@
+FROM node:24.13.1-bookworm-slim
+
+ENV PNPM_HOME=/pnpm
+ENV PATH=/pnpm:$PATH
+
+RUN corepack enable
+
+WORKDIR /app
+
+COPY . .
+
+RUN pnpm install --frozen-lockfile --filter t3code-relay... --ignore-scripts
+
+ENV NODE_ENV=production
+
+EXPOSE 3000
+
+CMD ["pnpm", "--filter", "t3code-relay", "start:self-hosted"]

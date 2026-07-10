@@ -5,20 +5,20 @@ import { ScrollView } from "react-native";
 
 import { CloudWaitlistEnrollment } from "../cloud/CloudWaitlistEnrollment";
 import { useClerkSettingsSheetDetent } from "../cloud/ClerkSettingsSheetDetent";
-import { hasCloudPublicConfig } from "../cloud/publicConfig";
+import { hasClerkCloudPublicConfig } from "../cloud/publicConfig";
 
 export function SettingsWaitlistRouteScreen() {
   const navigation = useNavigation();
 
   useFocusEffect(
     useCallback(() => {
-      if (!hasCloudPublicConfig()) {
+      if (!hasClerkCloudPublicConfig()) {
         navigation.dispatch(StackActions.replace("Settings"));
       }
     }, [navigation]),
   );
 
-  return hasCloudPublicConfig() ? <ConfiguredSettingsWaitlistRouteScreen /> : null;
+  return hasClerkCloudPublicConfig() ? <ConfiguredSettingsWaitlistRouteScreen /> : null;
 }
 
 function ConfiguredSettingsWaitlistRouteScreen() {

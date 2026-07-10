@@ -53,6 +53,36 @@ const relaySettings: RelayConfiguration.RelayConfiguration["Service"] = {
 };
 
 describe("relay client authentication", () => {
+  it.effect("accepts the configured self-hosted personal access token", () =>
+    Effect.gen(function* () {
+      const settings: RelayConfiguration.RelayConfiguration["Service"] = {
+        ...relaySettings,
+        personalAccessToken: Redacted.make("self-hosted-secret"),
+        personalAccountId: "owner",
+      };
+
+      expect(yield* verifyRelayClientBearerToken(settings, "self-hosted-secret")).toEqual({
+        sub: "owner",
+        mode: "personal_access_token",
+      });
+      expect(jwtVerify).not.toHaveBeenCalled();
+    }),
+  );
+
+  it.effect("rejects an incorrect self-hosted personal access token", () =>
+    Effect.gen(function* () {
+      const settings: RelayConfiguration.RelayConfiguration["Service"] = {
+        ...relaySettings,
+        personalAccessToken: Redacted.make("self-hosted-secret"),
+        personalAccountId: "owner",
+      };
+
+      const error = yield* Effect.flip(verifyRelayClientBearerToken(settings, "incorrect-secret"));
+      expect(Predicate.isTagged(error, "BearerTokenVerificationFailed")).toBe(true);
+      expect(jwtVerify).not.toHaveBeenCalled();
+    }),
+  );
+
   it.effect("accepts a Google ID token for the allowlisted account", () =>
     Effect.gen(function* () {
       vi.mocked(jwtVerify).mockResolvedValue({

@@ -1136,13 +1136,40 @@ function verifyGoogleIdToken(
   );
 }
 
+export interface VerifiedRelayClientBearerToken {
+  readonly sub: string;
+  readonly mode: "google_id_token" | "personal_access_token";
+}
+
 export function verifyRelayClientBearerToken(
   config: RelayConfiguration.RelayConfiguration["Service"],
   token: string,
-) {
-  return verifyGoogleIdToken(config, token).pipe(
-    Effect.map((verified) => ({ sub: verified.sub, mode: "google_id_token" as const })),
-  );
+): Effect.Effect<VerifiedRelayClientBearerToken, BearerTokenVerificationFailed> {
+  return Effect.gen(function* () {
+    if (config.personalAccessToken !== undefined) {
+      const expected = Redacted.value(config.personalAccessToken);
+      if (constantTimeStringEqual(token, expected)) {
+        return {
+          sub: config.personalAccountId ?? "self-hosted-owner",
+          mode: "personal_access_token" as const,
+        };
+      }
+      return yield* new BearerTokenVerificationFailed({ cause: "token_mismatch" });
+    }
+    const verified = yield* verifyGoogleIdToken(config, token);
+    return { sub: verified.sub, mode: "google_id_token" as const };
+  });
+}
+
+function constantTimeStringEqual(left: string, right: string): boolean {
+  const leftBytes = new TextEncoder().encode(left);
+  const rightBytes = new TextEncoder().encode(right);
+  const length = Math.max(leftBytes.length, rightBytes.length);
+  let difference = leftBytes.length ^ rightBytes.length;
+  for (let index = 0; index < length; index++) {
+    difference |= (leftBytes[index] ?? 0) ^ (rightBytes[index] ?? 0);
+  }
+  return difference === 0;
 }
 
 const requireDpopPrincipalScope = Effect.fn("relay.api.require_dpop_principal_scope")(function* (

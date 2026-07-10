@@ -24,6 +24,13 @@ export class RelayConfiguration extends Context.Service<
     // relay (single-user self-host — normally just the owner's Google account).
     readonly googleClientIds: readonly string[];
     readonly googleAllowedEmails: readonly string[];
+    /**
+     * Optional single-user authentication for a self-hosted relay. The token
+     * is generated per deployment and never needs an external identity
+     * provider. Google OIDC remains available when these fields are omitted.
+     */
+    readonly personalAccessToken?: Redacted.Redacted<string>;
+    readonly personalAccountId?: string;
     readonly apnsDeliveryJobSigningSecret: Redacted.Redacted<string>;
     readonly cloudMintPrivateKey: Redacted.Redacted<string>;
     readonly cloudMintPublicKey: string;

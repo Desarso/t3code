@@ -1,0 +1,10 @@
+.git
+.repos
+.vite-plus
+**/.vite-plus
+**/node_modules
+**/dist
+**/dist-electron
+apps/mobile/android
+apps/mobile/ios
+apps/mobile/profiles

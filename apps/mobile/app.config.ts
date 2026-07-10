@@ -225,6 +225,7 @@ const config: ExpoConfig = {
     appVariant: APP_VARIANT,
     relay: {
       url: repoEnv.T3CODE_RELAY_URL ?? null,
+      personalAccessToken: repoEnv.T3CODE_RELAY_PERSONAL_ACCESS_TOKEN ?? null,
     },
     clerk: {
       publishableKey: repoEnv.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY ?? null,
