@@ -24,6 +24,7 @@ import {
   relayNotFoundRoute,
   traceRelayHttpRequestWith,
   verifyRelayClientBearerToken,
+  verifyRelayDpopSubjectToken,
   withoutCapturedParentSpan,
 } from "./Api.ts";
 import * as RelayConfiguration from "../Config.ts";
@@ -79,6 +80,22 @@ describe("relay client authentication", () => {
 
       const error = yield* Effect.flip(verifyRelayClientBearerToken(settings, "incorrect-secret"));
       expect(Predicate.isTagged(error, "BearerTokenVerificationFailed")).toBe(true);
+      expect(jwtVerify).not.toHaveBeenCalled();
+    }),
+  );
+
+  it.effect("accepts the self-hosted personal token for DPoP bootstrap", () =>
+    Effect.gen(function* () {
+      const settings: RelayConfiguration.RelayConfiguration["Service"] = {
+        ...relaySettings,
+        personalAccessToken: Redacted.make("self-hosted-secret"),
+        personalAccountId: "owner",
+      };
+
+      expect(yield* verifyRelayDpopSubjectToken(settings, "self-hosted-secret")).toEqual({
+        sub: "owner",
+        mode: "personal_access_token",
+      });
       expect(jwtVerify).not.toHaveBeenCalled();
     }),
   );

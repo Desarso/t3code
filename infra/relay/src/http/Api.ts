@@ -631,20 +631,19 @@ export const tokenApi = HttpApiBuilder.group(
           clientId: args.payload.client_id,
           scope: args.payload.scope,
         });
-        yield* Effect.annotateCurrentSpan({
-          "relay.auth.mode": "google_id_token_exchange",
-          "relay.oauth.client_id": args.payload.client_id,
-          "relay.oauth.scopes": args.payload.scope,
-        });
         if (args.payload.resource !== issuer || requestedScopes === null) {
           return yield* new HttpApiError.Unauthorized({});
         }
 
-        // verifyGoogleIdToken enforces signature, issuer, audience, verified
-        // email + allowlist, and a non-empty subject, so `sub` is guaranteed.
-        const verified = yield* verifyGoogleIdToken(config, args.payload.subject_token).pipe(
-          Effect.catch(() => relayAuthInvalidError("invalid_bearer")),
-        );
+        const verified = yield* verifyRelayDpopSubjectToken(
+          config,
+          args.payload.subject_token,
+        ).pipe(Effect.catch(() => relayAuthInvalidError("invalid_bearer")));
+        yield* Effect.annotateCurrentSpan({
+          "relay.auth.mode": `${verified.mode}_exchange`,
+          "relay.oauth.client_id": args.payload.client_id,
+          "relay.oauth.scopes": args.payload.scope,
+        });
         const proofKeyThumbprint = yield* requireDpopProof().pipe(
           Effect.provideService(DpopProofs.DpopProofReplay, dpopProofs),
         );
@@ -1159,6 +1158,13 @@ export function verifyRelayClientBearerToken(
     const verified = yield* verifyGoogleIdToken(config, token);
     return { sub: verified.sub, mode: "google_id_token" as const };
   });
+}
+
+export function verifyRelayDpopSubjectToken(
+  config: RelayConfiguration.RelayConfiguration["Service"],
+  token: string,
+): Effect.Effect<VerifiedRelayClientBearerToken, BearerTokenVerificationFailed> {
+  return verifyRelayClientBearerToken(config, token);
 }
 
 function constantTimeStringEqual(left: string, right: string): boolean {
