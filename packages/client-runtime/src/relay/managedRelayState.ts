@@ -168,7 +168,11 @@ export function managedRelayAccountChanges(
   return AtomRegistry.toStream(registry, managedRelaySessionAtom).pipe(
     Stream.map((session) => session?.accountId ?? null),
     Stream.changes,
-    Stream.drop(1),
+    // A relay session can be activated before the lazily constructed
+    // connection runtime subscribes. Preserve that already-active account so
+    // cold-start discovery receives its credentials-changed wakeup, while an
+    // initial signed-out state remains idle.
+    Stream.dropWhile((accountId) => accountId === null),
   );
 }
 

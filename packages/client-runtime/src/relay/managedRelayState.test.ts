@@ -8,6 +8,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import { Atom, AtomRegistry } from "effect/unstable/reactivity";
 import { afterEach, vi } from "vite-plus/test";
@@ -198,13 +199,13 @@ describe("createManagedRelayQueryManager", () => {
     }),
   );
 
-  it("emits credential changes only when the managed relay account changes", async () => {
+  it("emits the current account and subsequent managed relay account changes", async () => {
     setManagedRelaySession(registry, {
       accountId: "account-1",
       readClerkToken: () => Promise.resolve("first-token"),
     });
     const changes = Effect.runPromise(
-      managedRelayAccountChanges(registry).pipe(Stream.take(2), Stream.runCollect),
+      managedRelayAccountChanges(registry).pipe(Stream.take(3), Stream.runCollect),
     );
     await vi.waitFor(() => {
       expect(registry.getNodes().get(managedRelaySessionAtom)?.listeners.size).toBeGreaterThan(0);
@@ -220,8 +221,21 @@ describe("createManagedRelayQueryManager", () => {
     });
     setManagedRelaySession(registry, null);
 
-    expect(Array.from(await changes)).toEqual(["account-2", null]);
+    expect(Array.from(await changes)).toEqual(["account-1", "account-2", null]);
   });
+
+  it.effect("emits an active account when discovery subscribes after session activation", () =>
+    Effect.gen(function* () {
+      setManagedRelaySession(registry, {
+        accountId: "account-1",
+        readClerkToken: () => Promise.resolve("first-token"),
+      });
+
+      const activeAccount = yield* managedRelayAccountChanges(registry).pipe(Stream.runHead);
+
+      expect(activeAccount).toEqual(Option.some("account-1"));
+    }),
+  );
 
   it("shares one Clerk token read across concurrent relay list and status queries", async () => {
     const secondEnvironment = {
