@@ -7,51 +7,57 @@ import * as Layer from "effect/Layer";
 import { createDpopProof, loadOrCreateDpopProofKeyPair } from "./dpop";
 import { managedRelayAccessTokenStore } from "./managedRelayTokenStore";
 
-const relayDpopSignerLayer = Layer.effect(
-  ManagedRelay.ManagedRelayDpopSigner,
-  Effect.gen(function* () {
-    const crypto = yield* Crypto.Crypto;
-    const loadProofKey = yield* Effect.cached(
-      loadOrCreateDpopProofKeyPair().pipe(Effect.provideService(Crypto.Crypto, crypto)),
-    );
-    return ManagedRelay.ManagedRelayDpopSigner.of({
-      thumbprint: loadProofKey.pipe(
-        Effect.map((proofKey) => proofKey.thumbprint),
+export const makeManagedRelayDpopSigner = Effect.gen(function* () {
+  const crypto = yield* Crypto.Crypto;
+  const loadProofKey = (yield* Effect.cached(
+    loadOrCreateDpopProofKeyPair().pipe(Effect.provideService(Crypto.Crypto, crypto)),
+  ))
+    // Relay discovery can restart a connection while its first authorization is
+    // loading this shared key. Keep the cache's initialization alive so the
+    // replacement connection receives the result instead of a cached interrupt.
+    .pipe(Effect.uninterruptible);
+  return ManagedRelay.ManagedRelayDpopSigner.of({
+    thumbprint: loadProofKey.pipe(
+      Effect.map((proofKey) => proofKey.thumbprint),
+      Effect.mapError(
+        (error) =>
+          new ManagedRelay.ManagedRelayDpopKeyLoadError({
+            keyStore: "expo-secure-store",
+            cause: error,
+          }),
+      ),
+      Effect.withSpan("mobile.managedRelayDpopSigner.loadThumbprint"),
+    ),
+    createProof: Effect.fn("mobile.managedRelayDpopSigner.createProof")(function* (input) {
+      const proofKey = yield* loadProofKey.pipe(
         Effect.mapError(
           (error) =>
-            new ManagedRelay.ManagedRelayDpopKeyLoadError({
-              keyStore: "expo-secure-store",
+            new ManagedRelay.ManagedRelayDpopProofCreationError({
+              method: input.method,
+              url: input.url,
               cause: error,
             }),
         ),
-        Effect.withSpan("mobile.managedRelayDpopSigner.loadThumbprint"),
-      ),
-      createProof: Effect.fn("mobile.managedRelayDpopSigner.createProof")(function* (input) {
-        const proofKey = yield* loadProofKey.pipe(
-          Effect.mapError(
-            (error) =>
-              new ManagedRelay.ManagedRelayDpopProofCreationError({
-                method: input.method,
-                url: input.url,
-                cause: error,
-              }),
-          ),
-        );
-        return yield* createDpopProof({ ...input, proofKey }).pipe(
-          Effect.provideService(Crypto.Crypto, crypto),
-          Effect.map((proof) => proof.proof),
-          Effect.mapError(
-            (error) =>
-              new ManagedRelay.ManagedRelayDpopProofCreationError({
-                method: input.method,
-                url: input.url,
-                cause: error,
-              }),
-          ),
-        );
-      }),
-    });
-  }),
+      );
+      return yield* createDpopProof({ ...input, proofKey }).pipe(
+        Effect.provideService(Crypto.Crypto, crypto),
+        Effect.map((proof) => proof.proof),
+        Effect.mapError(
+          (error) =>
+            new ManagedRelay.ManagedRelayDpopProofCreationError({
+              method: input.method,
+              url: input.url,
+              cause: error,
+            }),
+        ),
+      );
+    }),
+  });
+});
+
+const relayDpopSignerLayer = Layer.effect(
+  ManagedRelay.ManagedRelayDpopSigner,
+  makeManagedRelayDpopSigner,
 );
 
 export const managedRelayClientLayer = (relayUrl: string) =>

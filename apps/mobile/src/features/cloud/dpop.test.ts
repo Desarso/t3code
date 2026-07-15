@@ -5,7 +5,9 @@ import * as NodeCrypto from "node:crypto";
 import { vi } from "vite-plus/test";
 import { describe, expect, it } from "@effect/vitest";
 import * as Crypto from "effect/Crypto";
+import * as Exit from "effect/Exit";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import { verifyDpopProof } from "@t3tools/shared/dpop";
 
 import {
@@ -14,6 +16,7 @@ import {
   loadOrCreateDpopProofKeyPair,
   cryptoLayer,
 } from "./dpop";
+import { makeManagedRelayDpopSigner } from "./managedRelayLayer";
 
 vi.mock("expo-crypto", () => ({
   CryptoDigestAlgorithm: {
@@ -36,8 +39,9 @@ vi.mock("expo-crypto", () => ({
 }));
 
 const secureStore = new Map<string, string>();
+let getSecureStoreItem = (key: string) => Promise.resolve(secureStore.get(key) ?? null);
 vi.mock("expo-secure-store", () => ({
-  getItemAsync: (key: string) => Promise.resolve(secureStore.get(key) ?? null),
+  getItemAsync: (key: string) => getSecureStoreItem(key),
   setItemAsync: (key: string, value: string) => {
     secureStore.set(key, value);
     return Promise.resolve();
@@ -87,6 +91,52 @@ describe("mobile DPoP", () => {
       expect(second.thumbprint).toBe(first.thumbprint);
       expect(second.privateJwk).toEqual(first.privateJwk);
     }).pipe(Effect.provide(cryptoLayer)),
+  );
+
+  it.effect(
+    "keeps shared proof-key initialization alive when its first caller is interrupted",
+    () =>
+      Effect.gen(function* () {
+        const proofKey = yield* generateDpopProofKeyPair();
+        const storedProofKey = JSON.stringify(proofKey.privateJwk);
+        let signalReadStarted: (() => void) | undefined;
+        const readStarted = new Promise<void>((resolve) => {
+          signalReadStarted = resolve;
+        });
+        let finishRead: ((value: string | null) => void) | undefined;
+        getSecureStoreItem = () =>
+          new Promise<string | null>((resolve) => {
+            finishRead = resolve;
+            signalReadStarted?.();
+          });
+
+        const signer = yield* makeManagedRelayDpopSigner;
+        const firstCaller = yield* signer.thumbprint.pipe(
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* Effect.promise(() => readStarted).pipe(Effect.timeout("1 second"));
+        yield* Fiber.interrupt(firstCaller).pipe(Effect.forkChild({ startImmediately: true }));
+        const replacementCaller = yield* signer.thumbprint.pipe(
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* Effect.yieldNow;
+        finishRead?.(storedProofKey);
+
+        const replacementExit = yield* Fiber.await(replacementCaller).pipe(
+          Effect.timeout("1 second"),
+        );
+        expect(Exit.isSuccess(replacementExit)).toBe(true);
+        if (Exit.isSuccess(replacementExit)) {
+          expect(replacementExit.value).toBe(proofKey.thumbprint);
+        }
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            getSecureStoreItem = (key) => Promise.resolve(secureStore.get(key) ?? null);
+          }),
+        ),
+        Effect.provide(cryptoLayer),
+      ),
   );
 
   it.effect("rejects malformed persisted proof keys", () =>
