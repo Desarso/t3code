@@ -444,8 +444,11 @@ function ThreadRouteContent(
   const handleStopThread = useCallback(() => {
     if (
       !selectedThread ||
-      (selectedThread.session?.status !== "running" &&
-        selectedThread.session?.status !== "starting")
+      !(
+        (selectedThread.session?.status === "running" &&
+          selectedThread.session.activeTurnId !== null) ||
+        selectedThread.session?.status === "starting"
+      )
     ) {
       return;
     }
@@ -688,7 +691,9 @@ function ThreadRouteContent(
           connectionError={routeConnectionError}
           environmentLabel={selectedEnvironmentConnection?.environmentLabel ?? null}
           selectedThreadFeed={composer.selectedThreadFeed}
-          activeWorkStartedAt={composer.activeWorkStartedAt}
+          activeWorkStartedAt={
+            routeConnectionState === "connected" ? composer.activeWorkStartedAt : null
+          }
           activePendingApproval={requests.activePendingApproval}
           respondingApprovalId={requests.respondingApprovalId}
           activePendingUserInput={requests.activePendingUserInput}

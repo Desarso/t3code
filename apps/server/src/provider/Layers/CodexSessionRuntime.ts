@@ -526,6 +526,31 @@ function readNotificationThreadId(notification: CodexServerNotification): string
   }
 }
 
+/**
+ * Large unified diffs are already represented by the working tree and are not
+ * consumed by T3's provider-event projection. Do not copy them into the
+ * provider queue and each observability stream: a single notification can be
+ * tens of megabytes and used to be serialized several times concurrently.
+ */
+export function compactCodexProviderEventPayload(method: string, payload: unknown): unknown {
+  if (
+    method !== "turn/diff/updated" ||
+    payload === null ||
+    typeof payload !== "object" ||
+    !("diff" in payload) ||
+    typeof payload.diff !== "string"
+  ) {
+    return payload;
+  }
+  const { diff, ...metadata } = payload;
+  return {
+    ...metadata,
+    diff: "",
+    diffCharacterCount: diff.length,
+    diffOmitted: true,
+  };
+}
+
 function readRouteFields(notification: CodexServerNotification): {
   readonly turnId: TurnId | undefined;
   readonly itemId: ProviderItemId | undefined;
@@ -826,7 +851,7 @@ export const makeCodexSessionRuntime = (
 
     const handleRawNotification = (notification: CodexServerNotification) =>
       Effect.gen(function* () {
-        const payload = notification.params;
+        const payload = compactCodexProviderEventPayload(notification.method, notification.params);
         const route = readRouteFields(notification);
         const collabReceiverTurns = yield* Ref.get(collabReceiverTurnsRef);
         const childParentTurnId = (() => {
@@ -895,6 +920,31 @@ export const makeCodexSessionRuntime = (
           return updateSession(sessionRef, {
             resumeCursor: { threadId: payload.thread.id },
           });
+        }),
+      ),
+    );
+
+    yield* client.handleServerNotification("thread/status/changed", (payload) =>
+      currentSessionProviderThreadId.pipe(
+        Effect.flatMap((providerThreadId) => {
+          if (providerThreadId && payload.threadId !== providerThreadId) {
+            return Effect.void;
+          }
+          switch (payload.status.type) {
+            case "active":
+              return updateSession(sessionRef, { status: "running" });
+            case "systemError":
+              return updateSession(sessionRef, {
+                status: "error",
+                activeTurnId: undefined,
+              });
+            case "idle":
+            case "notLoaded":
+              return updateSession(sessionRef, {
+                status: "ready",
+                activeTurnId: undefined,
+              });
+          }
         }),
       ),
     );

@@ -1,14 +1,24 @@
 import { type ServerProvider } from "@t3tools/contracts";
 import { memo } from "react";
-import { InfoIcon } from "lucide-react";
+import { InfoIcon, XIcon } from "lucide-react";
 import { cn } from "~/lib/utils";
 import { formatProviderDriverKindLabel } from "../../providerModels";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { Button } from "../ui/button";
+
+export function isTransientProviderCapacityMessage(message: string | null | undefined): boolean {
+  const normalized = message?.trim().toLowerCase() ?? "";
+  return (
+    normalized.includes("at capacity") || /\b(model|provider)\b.*\bcapacity\b/u.test(normalized)
+  );
+}
 
 export const ProviderStatusBanner = memo(function ProviderStatusBanner({
   status,
+  onDismiss,
 }: {
   status: ServerProvider | null;
+  onDismiss?: () => void;
 }) {
   if (!status || status.status === "ready" || status.status === "disabled") {
     return null;
@@ -49,6 +59,17 @@ export const ProviderStatusBanner = memo(function ProviderStatusBanner({
             </TooltipPopup>
           </Tooltip>
         </div>
+        {onDismiss ? (
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            className="shrink-0"
+            aria-label="Dismiss provider status"
+            onClick={onDismiss}
+          >
+            <XIcon />
+          </Button>
+        ) : null}
       </div>
     </div>
   );

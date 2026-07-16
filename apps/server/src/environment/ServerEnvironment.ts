@@ -8,10 +8,12 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
-import packageJson from "../../package.json" with { type: "json" };
+import { BUILD_VERSION, resolveBuildVersion } from "../buildVersion.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import { resolveServerEnvironmentLabel } from "./ServerEnvironmentLabel.ts";
+
+export const resolveServerVersion = resolveBuildVersion;
 
 export class ServerEnvironmentIdPersistenceError extends Schema.TaggedErrorClass<ServerEnvironmentIdPersistenceError>()(
   "ServerEnvironmentIdPersistenceError",
@@ -132,7 +134,7 @@ export const make = Effect.gen(function* () {
       os: platformOs(hostPlatform),
       arch: platformArch(hostArchitecture),
     },
-    serverVersion: packageJson.version,
+    serverVersion: BUILD_VERSION,
     capabilities: {
       repositoryIdentity: true,
     },

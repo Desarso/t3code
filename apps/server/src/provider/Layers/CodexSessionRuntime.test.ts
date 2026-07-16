@@ -14,11 +14,39 @@ import {
 } from "../CodexDeveloperInstructions.ts";
 import {
   buildTurnStartParams,
+  compactCodexProviderEventPayload,
   hasConfiguredMcpServer,
   isRecoverableThreadResumeError,
   openCodexThread,
 } from "./CodexSessionRuntime.ts";
 const isCodexAppServerRequestError = Schema.is(CodexErrors.CodexAppServerRequestError);
+
+describe("compactCodexProviderEventPayload", () => {
+  it("replaces oversized diff text with bounded metadata", () => {
+    const payload = compactCodexProviderEventPayload("turn/diff/updated", {
+      threadId: "thread-1",
+      turnId: "turn-1",
+      diff: "x".repeat(25 * 1024 * 1024),
+    });
+
+    NodeAssert.deepStrictEqual(payload, {
+      threadId: "thread-1",
+      turnId: "turn-1",
+      diff: "",
+      diffCharacterCount: 25 * 1024 * 1024,
+      diffOmitted: true,
+    });
+    NodeAssert.ok(JSON.stringify(payload).length < 256);
+  });
+
+  it("preserves non-diff provider payloads", () => {
+    const payload = { delta: "hello" };
+    NodeAssert.strictEqual(
+      compactCodexProviderEventPayload("item/agentMessage/delta", payload),
+      payload,
+    );
+  });
+});
 
 describe("CodexSessionRuntimeIdentifierGenerationError", () => {
   it("retains identifier purpose and the random source failure", () => {

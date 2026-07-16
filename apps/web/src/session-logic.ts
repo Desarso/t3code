@@ -296,10 +296,8 @@ export function isLatestTurnSettled(
   session: SessionActivityState | null,
 ): boolean {
   if (!latestTurn?.startedAt) return false;
-  if (!latestTurn.completedAt) return false;
-  if (!session) return true;
-  if (session.status === "running") return false;
-  return true;
+  if (!session) return latestTurn.completedAt !== null;
+  return !(session.status === "running" && session.activeTurnId !== null);
 }
 
 export function deriveActiveWorkStartedAt(
@@ -1388,6 +1386,6 @@ export function derivePhase(session: ThreadSession | null): SessionPhase {
     return "disconnected";
   }
   if (session.status === "starting") return "connecting";
-  if (session.status === "running") return "running";
+  if (session.status === "running" && session.activeTurnId !== null) return "running";
   return "ready";
 }

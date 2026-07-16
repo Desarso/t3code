@@ -49,6 +49,12 @@ const makeServerConfig = Effect.fn(function* (baseDir: string) {
 });
 
 it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
+  it("prefers the explicit build version and falls back to the package version", () => {
+    expect(ServerEnvironment.resolveServerVersion(" 1.2.3 ", "0.0.28")).toBe("1.2.3");
+    expect(ServerEnvironment.resolveServerVersion(undefined, "0.0.28")).toBe("0.0.28");
+    expect(ServerEnvironment.resolveServerVersion("   ", "0.0.28")).toBe("0.0.28");
+  });
+
   it.effect("persists the environment id across service restarts", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

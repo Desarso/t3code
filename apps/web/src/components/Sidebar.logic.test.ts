@@ -615,6 +615,29 @@ describe("resolveThreadStatusPill", () => {
     ).toMatchObject({ label: "Working", pulse: true });
   });
 
+  it("does not show working without an active provider turn", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          session: {
+            ...baseThread.session,
+            activeTurnId: null,
+          },
+        },
+      }),
+    ).toBeNull();
+  });
+
+  it("does not show transient working state while the environment is disconnected", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: baseThread,
+        isEnvironmentConnected: false,
+      }),
+    ).toBeNull();
+  });
+
   it("shows plan ready when a settled plan turn has a proposed plan ready for follow-up", () => {
     expect(
       resolveThreadStatusPill({

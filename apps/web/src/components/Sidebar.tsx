@@ -464,6 +464,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
       ...thread,
       lastVisitedAt,
     },
+    isEnvironmentConnected: environment?.connection.phase === "connected",
   });
   const pr = resolveThreadPr(thread.branch, gitStatus.data);
   const prStatus = prStatusIndicator(pr, gitStatus.data?.sourceControlProvider);
@@ -1173,6 +1174,16 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     },
   });
   const openPrLink = useOpenPrLink();
+  const { environments } = useEnvironments();
+  const connectedEnvironmentIds = useMemo(
+    () =>
+      new Set(
+        environments
+          .filter((environment) => environment.connection.phase === "connected")
+          .map((environment) => environment.environmentId),
+      ),
+    [environments],
+  );
   const sidebarThreads = useThreadShellsForProjectRefs(project.memberProjectRefs);
   const sidebarThreadByKey = useMemo(
     () =>
@@ -1261,6 +1272,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           ...thread,
           ...(lastVisitedAt !== null && lastVisitedAt !== undefined ? { lastVisitedAt } : {}),
         },
+        isEnvironmentConnected: connectedEnvironmentIds.has(thread.environmentId),
       });
     };
     const visibleProjectThreads = sortThreads(
@@ -1277,7 +1289,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       projectStatus,
       visibleProjectThreads,
     };
-  }, [projectThreads, threadLastVisitedAts, threadSortOrder]);
+  }, [connectedEnvironmentIds, projectThreads, threadLastVisitedAts, threadSortOrder]);
   const pinnedCollapsedThread = useMemo(() => {
     const activeThreadKey = activeRouteThreadKey ?? undefined;
     if (!activeThreadKey || projectExpanded) {
@@ -1313,6 +1325,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           ...thread,
           ...(lastVisitedAt !== null && lastVisitedAt !== undefined ? { lastVisitedAt } : {}),
         },
+        isEnvironmentConnected: connectedEnvironmentIds.has(thread.environmentId),
       });
     };
     const hasOverflowingThreads = visibleProjectThreads.length > sidebarThreadPreviewCount;
@@ -1344,6 +1357,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       shouldShowThreadPanel: projectExpanded || pinnedCollapsedThread !== null,
     };
   }, [
+    connectedEnvironmentIds,
     isThreadListExpanded,
     pinnedCollapsedThread,
     projectExpanded,

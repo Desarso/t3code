@@ -288,7 +288,8 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     onExpandedChange?.(false);
   }, [onExpandedChange]);
   const showStopAction =
-    props.selectedThread.session?.status === "running" ||
+    (props.selectedThread.session?.status === "running" &&
+      props.selectedThread.session.activeTurnId !== null) ||
     props.selectedThread.session?.status === "starting";
 
   const sendLabel =

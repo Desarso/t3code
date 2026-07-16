@@ -198,6 +198,7 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
   );
   const threadProjectCwd = threadProject?.workspaceRoot ?? null;
   const gitCwd = thread.worktreePath ?? threadProjectCwd;
+  const environment = useEnvironment(thread.environmentId);
   const gitStatus = useEnvironmentQuery(
     thread.branch != null && gitCwd !== null
       ? vcsEnvironment.status({
@@ -213,6 +214,7 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
       ...thread,
       lastVisitedAt,
     },
+    isEnvironmentConnected: environment?.connection.phase === "connected",
   });
 
   if (!prStatus && !threadStatus) {

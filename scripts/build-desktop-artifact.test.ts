@@ -10,6 +10,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
   BuildCommandFailedError,
+  createDesktopCompilationEnvironment,
   createStageWorkspaceConfig,
   createStagePatchedDependencies,
   createBuildConfig,
@@ -81,6 +82,19 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
   it("resolves the dedicated nightly updater channel from nightly versions", () => {
     assert.equal(resolveDesktopUpdateChannel("0.0.17-nightly.20260413.42"), "nightly");
     assert.equal(resolveDesktopUpdateChannel("0.0.17"), "latest");
+  });
+
+  it("pins desktop compilation to the requested artifact version", () => {
+    assert.deepStrictEqual(
+      createDesktopCompilationEnvironment(
+        { APP_VERSION: "stale", PATH: "/usr/bin" },
+        "0.0.29-nightly.20260714.1",
+      ),
+      {
+        APP_VERSION: "0.0.29-nightly.20260714.1",
+        PATH: "/usr/bin",
+      },
+    );
   });
 
   it("switches desktop packaging product names to nightly for nightly builds", () => {

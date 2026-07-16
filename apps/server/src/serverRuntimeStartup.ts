@@ -34,6 +34,7 @@ import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as ProviderSessionReaper from "./provider/Services/ProviderSessionReaper.ts";
+import { reconcileOrphanedProviderSessions } from "./provider/reconcileOrphanedSessions.ts";
 import {
   formatHeadlessServeOutput,
   formatHostForUrl,
@@ -342,6 +343,11 @@ export const make = Effect.gen(function* () {
       "reactors.start",
       Effect.gen(function* () {
         yield* orchestrationReactor.start().pipe(Scope.provide(reactorScope));
+        yield* reconcileOrphanedProviderSessions().pipe(
+          Effect.catchCause((cause) =>
+            Effect.logError("failed to reconcile orphaned provider sessions", { cause }),
+          ),
+        );
         yield* providerSessionReaper.start().pipe(Scope.provide(reactorScope));
       }),
     );

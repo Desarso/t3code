@@ -209,8 +209,12 @@ import { PanelLayoutControls, RightPanelMaximizeControl } from "./chat/PanelLayo
 import { type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { NoActiveThreadState } from "./NoActiveThreadState";
 import { resolveEffectiveEnvMode } from "./BranchToolbar.logic";
-import { ProviderStatusBanner } from "./chat/ProviderStatusBanner";
+import {
+  isTransientProviderCapacityMessage,
+  ProviderStatusBanner,
+} from "./chat/ProviderStatusBanner";
 import { ThreadErrorBanner } from "./chat/ThreadErrorBanner";
+import { resolveInterruptedTurnContinuation } from "./chat/interruptedTurnRecovery";
 import { ComposerBannerStack, type ComposerBannerStackItem } from "./chat/ComposerBannerStack";
 import {
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
@@ -1223,6 +1227,10 @@ function ChatViewContent(props: ChatViewProps) {
       ? null
       : ((draftId ? localDraftErrorsByDraftId[draftId] : null) ?? null);
   const localServerError = localServerErrorsByThreadKey[routeThreadKey] ?? null;
+  const hasLocalServerError = Object.prototype.hasOwnProperty.call(
+    localServerErrorsByThreadKey,
+    routeThreadKey,
+  );
   const localDraftThread = useMemo(
     () =>
       draftThread
@@ -1240,7 +1248,9 @@ function ChatViewContent(props: ChatViewProps) {
   const isServerThread = routeKind === "server" && serverThread !== null;
   const activeThread = isServerThread ? serverThread : localDraftThread;
   const threadError = isServerThread
-    ? (localServerError ?? serverThread?.session?.lastError ?? null)
+    ? hasLocalServerError
+      ? localServerError
+      : (serverThread?.session?.lastError ?? null)
     : localDraftError;
   const runtimeMode = composerRuntimeMode ?? activeThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE;
   const interactionMode =
@@ -1812,7 +1822,9 @@ function ChatViewContent(props: ChatViewProps) {
     activePendingUserInput: activePendingUserInput?.requestId ?? null,
     threadError,
   });
-  const isWorking = phase === "running" || isSendBusy || isConnecting || isRevertingCheckpoint;
+  const isWorking =
+    !activeEnvironmentUnavailable &&
+    (phase === "running" || isSendBusy || isConnecting || isRevertingCheckpoint);
   const activeWorkStartedAt = deriveActiveWorkStartedAt(
     activeLatestTurn,
     activeThread?.session ?? null,
@@ -2144,6 +2156,33 @@ function ChatViewContent(props: ChatViewProps) {
     const defaultInstanceId = defaultInstanceIdForDriver(selectedProvider);
     return providerStatuses.find((status) => status.instanceId === defaultInstanceId) ?? null;
   }, [activeProviderInstanceId, providerStatuses, selectedProvider]);
+  const activeProviderStatusBannerKey = activeProviderStatus
+    ? [
+        activeProviderStatus.instanceId,
+        activeProviderStatus.status,
+        activeProviderStatus.auth.status,
+        activeProviderStatus.message ?? "",
+      ].join(":")
+    : null;
+  const [dismissedProviderStatusBannerKey, setDismissedProviderStatusBannerKey] = useState<
+    string | null
+  >(null);
+  useEffect(() => {
+    if (
+      !activeProviderStatus ||
+      activeProviderStatus.status === "ready" ||
+      activeProviderStatus.status === "disabled"
+    ) {
+      setDismissedProviderStatusBannerKey(null);
+    }
+  }, [activeProviderStatus]);
+  const visibleThreadError =
+    isWorking && isTransientProviderCapacityMessage(threadError) ? null : threadError;
+  const visibleProviderStatus =
+    activeProviderStatusBannerKey !== dismissedProviderStatusBannerKey &&
+    !(isWorking && isTransientProviderCapacityMessage(activeProviderStatus?.message))
+      ? activeProviderStatus
+      : null;
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
   const activeWorkspaceRoot = activeThreadWorktreePath ?? activeProjectCwd ?? undefined;
@@ -4238,6 +4277,33 @@ function ChatViewContent(props: ChatViewProps) {
     }
   };
 
+  const onContinueInterruptedTurn = () => {
+    const sendContext = composerRef.current?.getSendContext();
+    if (!sendContext) {
+      focusComposer();
+      return;
+    }
+    const continuation = resolveInterruptedTurnContinuation({
+      draftPrompt: promptRef.current,
+      hasPendingAttachments:
+        sendContext.images.length > 0 ||
+        sendContext.terminalContexts.length > 0 ||
+        sendContext.elementContexts.length > 0 ||
+        sendContext.previewAnnotations.length > 0 ||
+        sendContext.reviewComments.length > 0,
+    });
+
+    setThreadError(activeThread?.id ?? null, null);
+    if (continuation.kind === "focus") {
+      focusComposer();
+      return;
+    }
+
+    promptRef.current = continuation.prompt;
+    setComposerDraftPrompt(composerDraftTarget, continuation.prompt);
+    void onSend();
+  };
+
   const onInterrupt = async () => {
     if (!activeThread) return;
     const result = await interruptThreadTurn({
@@ -5057,9 +5123,24 @@ function ChatViewContent(props: ChatViewProps) {
         </header>
 
         {/* Error banner */}
-        <ProviderStatusBanner status={activeProviderStatus} />
+        <ProviderStatusBanner
+          status={visibleProviderStatus}
+          {...(activeProviderStatusBannerKey
+            ? {
+                onDismiss: () => setDismissedProviderStatusBannerKey(activeProviderStatusBannerKey),
+              }
+            : {})}
+        />
         <ThreadErrorBanner
-          error={threadError}
+          error={visibleThreadError}
+          {...(activeThread.session?.status === "interrupted"
+            ? {
+                action: {
+                  label: "Continue",
+                  onClick: onContinueInterruptedTurn,
+                },
+              }
+            : {})}
           onDismiss={() => setThreadError(activeThread.id, null)}
         />
         {/* Main content area with optional plan sidebar */}
@@ -5072,7 +5153,7 @@ function ChatViewContent(props: ChatViewProps) {
               <MessagesTimeline
                 key={activeThread.id}
                 isWorking={isWorking}
-                activeTurnInProgress={isWorking || !latestTurnSettled}
+                activeTurnInProgress={isWorking}
                 activeTurnStartedAt={activeWorkStartedAt}
                 listRef={legendListRef}
                 timelineEntries={timelineEntries}

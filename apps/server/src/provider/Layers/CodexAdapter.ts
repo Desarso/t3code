@@ -378,6 +378,20 @@ function toThreadState(
   }
 }
 
+function toSessionStateFromThreadStatus(
+  status: EffectCodexSchema.V2ThreadStatusChangedNotification["status"],
+): "ready" | "running" | "error" {
+  switch (status.type) {
+    case "active":
+      return "running";
+    case "systemError":
+      return "error";
+    case "idle":
+    case "notLoaded":
+      return "ready";
+  }
+}
+
 function contentStreamKindFromMethod(
   method: string,
 ):
@@ -680,21 +694,36 @@ function mapToRuntimeEvents(
       event.method === "thread/status/changed"
         ? readPayload(EffectCodexSchema.V2ThreadStatusChangedNotification, event.payload)
         : undefined;
+    const threadStateEvent = {
+      type: "thread.state.changed" as const,
+      ...runtimeEventBase(event, canonicalThreadId),
+      payload: {
+        state:
+          event.method === "thread/archived"
+            ? ("archived" as const)
+            : event.method === "thread/closed"
+              ? ("closed" as const)
+              : event.method === "thread/compacted"
+                ? ("compacted" as const)
+                : payload
+                  ? toThreadState(payload.status)
+                  : ("active" as const),
+        ...(event.payload !== undefined ? { detail: event.payload } : {}),
+      },
+    };
+    if (event.method !== "thread/status/changed" || !payload) {
+      return [threadStateEvent];
+    }
+
+    // Codex's own thread status is authoritative. An idle notification may be
+    // the only terminal lifecycle event observed after transport disruption.
     return [
+      threadStateEvent,
       {
-        type: "thread.state.changed",
+        type: "session.state.changed",
         ...runtimeEventBase(event, canonicalThreadId),
         payload: {
-          state:
-            event.method === "thread/archived"
-              ? "archived"
-              : event.method === "thread/closed"
-                ? "closed"
-                : event.method === "thread/compacted"
-                  ? "compacted"
-                  : payload
-                    ? toThreadState(payload.status)
-                    : "active",
+          state: toSessionStateFromThreadStatus(payload.status),
           ...(event.payload !== undefined ? { detail: event.payload } : {}),
         },
       },

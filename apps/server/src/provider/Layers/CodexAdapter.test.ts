@@ -659,6 +659,35 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("uses Codex thread status as the authoritative session lifecycle", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 2)).pipe(
+        Effect.forkChild,
+      );
+
+      yield* runtime.emit({
+        id: asEventId("evt-thread-idle"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "thread/status/changed",
+        payload: {
+          threadId: "thread-1",
+          status: { type: "idle" },
+        },
+      } satisfies ProviderEvent);
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      NodeAssert.equal(events[0]?.type, "thread.state.changed");
+      NodeAssert.equal(events[1]?.type, "session.state.changed");
+      if (events[1]?.type === "session.state.changed") {
+        NodeAssert.equal(events[1].payload.state, "ready");
+      }
+    }),
+  );
+
   it.effect("maps retryable Codex error notifications to runtime.warning", () =>
     Effect.gen(function* () {
       const { adapter, runtime } = yield* startLifecycleRuntime();

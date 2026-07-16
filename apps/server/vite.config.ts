@@ -1,5 +1,6 @@
 import "vite-plus/test/config";
 import { defineConfig, mergeConfig } from "vite-plus";
+import serverPackageJson from "./package.json" with { type: "json" };
 
 import baseConfig from "../../vite.config.ts";
 import { loadRepoEnv } from "../../scripts/lib/public-config.ts";
@@ -16,6 +17,7 @@ export function shouldBundleCliDependency(id: string): boolean {
 }
 
 const repoEnv = loadRepoEnv();
+const configuredAppVersion = process.env.APP_VERSION?.trim() || serverPackageJson.version;
 
 export default mergeConfig(
   baseConfig,
@@ -42,6 +44,7 @@ export default mergeConfig(
         js: "#!/usr/bin/env node\n",
       },
       define: {
+        __T3CODE_BUILD_APP_VERSION__: JSON.stringify(configuredAppVersion),
         __T3CODE_BUILD_RELAY_URL__: JSON.stringify(repoEnv.T3CODE_RELAY_URL?.trim() ?? ""),
         __T3CODE_BUILD_CLERK_PUBLISHABLE_KEY__: JSON.stringify(
           repoEnv.T3CODE_CLERK_PUBLISHABLE_KEY?.trim() ?? "",

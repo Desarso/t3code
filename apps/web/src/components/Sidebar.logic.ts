@@ -359,6 +359,7 @@ export function resolveThreadRowClassName(input: {
 
 export function resolveThreadStatusPill(input: {
   thread: ThreadStatusInput;
+  isEnvironmentConnected?: boolean;
 }): ThreadStatusPill | null {
   const { thread } = input;
 
@@ -380,7 +381,11 @@ export function resolveThreadStatusPill(input: {
     };
   }
 
-  if (thread.session?.status === "running") {
+  if (
+    input.isEnvironmentConnected !== false &&
+    thread.session?.status === "running" &&
+    thread.session.activeTurnId !== null
+  ) {
     return {
       label: "Working",
       colorClass: "text-sky-600 dark:text-sky-300/80",
@@ -389,7 +394,7 @@ export function resolveThreadStatusPill(input: {
     };
   }
 
-  if (thread.session?.status === "starting") {
+  if (input.isEnvironmentConnected !== false && thread.session?.status === "starting") {
     return {
       label: "Connecting",
       colorClass: "text-sky-600 dark:text-sky-300/80",

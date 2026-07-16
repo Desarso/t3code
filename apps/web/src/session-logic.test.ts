@@ -1612,6 +1612,18 @@ describe("isLatestTurnSettled", () => {
     ).toBe(true);
   });
 
+  it("treats a running status without an active turn as settled", () => {
+    expect(
+      isLatestTurnSettled(
+        { ...latestTurn, completedAt: null },
+        {
+          status: "running",
+          activeTurnId: null,
+        },
+      ),
+    ).toBe(true);
+  });
+
   it("returns false when turn timestamps are incomplete", () => {
     expect(
       isLatestTurnSettled(

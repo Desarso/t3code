@@ -1363,6 +1363,16 @@ export function resolveDesktopProductName(version: string): string {
     : (desktopPackageJson.productName ?? "T3 Code");
 }
 
+export function createDesktopCompilationEnvironment(
+  env: Readonly<NodeJS.ProcessEnv>,
+  appVersion: string,
+): NodeJS.ProcessEnv {
+  return {
+    ...env,
+    APP_VERSION: appVersion,
+  };
+}
+
 export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   platform: typeof BuildPlatform.Type,
   target: string,
@@ -1633,11 +1643,15 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
 
   if (!options.skipBuild) {
     yield* Effect.log("[desktop-artifact] Building desktop/server/web artifacts...");
-    const spawnCommand = yield* resolveSpawnCommand("vp", ["run", "build:desktop"]);
+    const compilationEnv = createDesktopCompilationEnvironment(process.env, appVersion);
+    const spawnCommand = yield* resolveSpawnCommand("vp", ["run", "--no-cache", "build:desktop"], {
+      env: compilationEnv,
+    });
     yield* runCommand(
       ChildProcess.make(spawnCommand.command, spawnCommand.args, {
         cwd: repoRoot,
         shell: spawnCommand.shell,
+        env: compilationEnv,
       }),
       { label: "vp run build:desktop", verbose: options.verbose },
     );
