@@ -24,6 +24,7 @@ import * as EnvironmentLinker from "./environments/EnvironmentLinker.ts";
 import * as EnvironmentPublishSignatures from "./environments/EnvironmentPublishSignatures.ts";
 import * as ManagedEndpointAllocations from "./environments/ManagedEndpointAllocations.ts";
 import * as ManagedEndpointProvider from "./environments/ManagedEndpointProvider.ts";
+import * as ManagedTunnelLimits from "./environments/ManagedTunnelLimits.ts";
 
 export const webcryptoLayer = Layer.succeed(
   Crypto.Crypto,
@@ -55,6 +56,7 @@ export const makeRelayRuntimeLayer = <
     never,
     | Crypto.Crypto
     | ManagedEndpointAllocations.ManagedEndpointAllocations
+    | ManagedTunnelLimits.ManagedTunnelLimits
     | RelayConfiguration.RelayConfiguration
   >;
   readonly apnsDeliveryQueue: Layer.Layer<
@@ -77,11 +79,17 @@ export const makeRelayRuntimeLayer = <
     Layer.provideMerge(AgentActivityRows.layer),
     Layer.provideMerge(Devices.layer),
     Layer.provideMerge(EnvironmentCredentials.layer),
-    Layer.provideMerge(Layer.mergeAll(EnvironmentLinks.layer, ManagedEndpointAllocations.layer)),
+    Layer.provideMerge(
+      Layer.mergeAll(
+        EnvironmentLinks.layer,
+        ManagedEndpointAllocations.layer,
+        ManagedTunnelLimits.layer,
+      ),
+    ),
     Layer.provideMerge(LiveActivities.layer),
     Layer.provideMerge(DeliveryAttempts.layer),
     Layer.provideMerge(RelayTokens.layer),
-    Layer.provideMerge(layers.database),
+    Layer.provideMerge(RelayDb.RelayTransactions.layer.pipe(Layer.provideMerge(layers.database))),
     Layer.provideMerge(layers.configuration),
     Layer.provideMerge(webcryptoLayer),
   );

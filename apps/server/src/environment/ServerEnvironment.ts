@@ -9,6 +9,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import { BUILD_VERSION, resolveBuildVersion } from "../buildVersion.ts";
+import { resolveServerSelfUpdateCapability } from "../cloud/selfUpdate.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import { resolveServerEnvironmentLabel } from "./ServerEnvironmentLabel.ts";
@@ -126,6 +127,9 @@ export const make = Effect.gen(function* () {
   const environmentId = EnvironmentId.make(environmentIdRaw);
   const cwdBaseName = path.basename(serverConfig.cwd).trim();
   const label = yield* resolveServerEnvironmentLabel({ cwdBaseName });
+  const serverSelfUpdate = yield* resolveServerSelfUpdateCapability({
+    desktopManaged: serverConfig.mode === "desktop",
+  });
 
   const descriptor: ExecutionEnvironmentDescriptor = {
     environmentId,
@@ -137,6 +141,10 @@ export const make = Effect.gen(function* () {
     serverVersion: BUILD_VERSION,
     capabilities: {
       repositoryIdentity: true,
+      connectionProbe: true,
+      threadSettlement: true,
+      threadSnooze: true,
+      ...(serverSelfUpdate === null ? {} : { serverSelfUpdate }),
     },
   };
 

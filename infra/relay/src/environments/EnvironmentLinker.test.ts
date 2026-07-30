@@ -135,7 +135,9 @@ function testLayer(input?: {
           revokeForEnvironmentPublicKey: () => Effect.succeed(false),
         }),
         Layer.succeed(ManagedEndpointProvider.ManagedEndpointProvider, {
+          prepareDeprovision: () => Effect.succeed(null),
           deprovision: input?.deprovision ?? (() => Effect.void),
+          release: () => Effect.succeed(true),
           provision: () =>
             Effect.succeed({
               endpoint: {

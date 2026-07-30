@@ -1,4 +1,4 @@
-import { SymbolView } from "expo-symbols";
+import { SymbolView } from "../../components/AppSymbol";
 import {
   connectionStatusText,
   type EnvironmentConnectionPhase,
@@ -24,26 +24,45 @@ import { useCloudAuth } from "../cloud/CloudAuthProvider";
 import { ConnectionStatusDot } from "./ConnectionStatusDot";
 import { type RelayEnvironmentView, useConnectionController } from "./useConnectionController";
 
-/**
- * "T3 Connect" section: every environment published to the signed-in account,
- * with connect switches, availability status, refresh, and loading/error
- * states. Shared between the Settings environments screen and the T3 Connect
- * onboarding sheet.
- */
-export function CloudEnvironmentRows(props: {
+interface CloudEnvironmentRowsProps {
   readonly connectedCloudEnvironments: ReadonlyArray<ConnectedEnvironmentSummary>;
   readonly onReconnectEnvironment: (environmentId: EnvironmentId) => void;
+  readonly showcaseAvailableEnvironments?: ReadonlyArray<RelayEnvironmentView>;
+  readonly showcaseSignedIn?: boolean;
   /**
    * Hide the "T3 Connect" section title + refresh button for hosts that
    * provide their own chrome (the onboarding sheet's native header and
    * pull-to-refresh).
    */
   readonly showHeader?: boolean;
-}) {
+}
+
+/**
+ * "T3 Connect" section: every environment published to the signed-in account,
+ * with connect switches, availability status, refresh, and loading/error
+ * states. Shared between the Settings environments screen and the T3 Connect
+ * onboarding sheet.
+ */
+export function CloudEnvironmentRows(props: CloudEnvironmentRowsProps) {
+  // Showcase captures provide their auth state explicitly so fixtures stay
+  // independent from either Clerk or a self-hosted personal access token.
+  if (props.showcaseSignedIn !== undefined) {
+    return props.showcaseSignedIn ? <CloudEnvironmentRowsContent {...props} /> : null;
+  }
+  return <SignedInCloudEnvironmentRows {...props} />;
+}
+
+function SignedInCloudEnvironmentRows(props: CloudEnvironmentRowsProps) {
   const { isSignedIn } = useCloudAuth();
+  if (!isSignedIn) return null;
+  return <CloudEnvironmentRowsContent {...props} />;
+}
+
+function CloudEnvironmentRowsContent(props: CloudEnvironmentRowsProps) {
   const controller = useConnectionController();
   const iconColor = useThemeColor("--color-icon");
-  const availableCloudEnvironments = controller.availableRelayEnvironments;
+  const availableCloudEnvironments =
+    props.showcaseAvailableEnvironments ?? controller.availableRelayEnvironments;
   const [expandedErrorId, setExpandedErrorId] = useState<string | null>(null);
   const hasCloudRows =
     props.connectedCloudEnvironments.length > 0 || availableCloudEnvironments.length > 0;
@@ -63,8 +82,6 @@ export function CloudEnvironmentRows(props: {
   }, []);
 
   const showHeader = props.showHeader ?? true;
-
-  if (!isSignedIn) return null;
 
   return (
     <View collapsable={false} className={cn("gap-3", showHeader && "mt-5")}>

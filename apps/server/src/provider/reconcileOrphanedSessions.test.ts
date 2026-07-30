@@ -44,6 +44,8 @@ function shellSnapshot(status: "running" | "ready"): OrchestrationShellSnapshot 
         createdAt: now,
         updatedAt: now,
         archivedAt: null,
+        settledOverride: null,
+        settledAt: null,
         latestUserMessageAt: now,
         hasPendingApprovals: false,
         hasPendingUserInput: false,

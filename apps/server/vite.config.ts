@@ -18,6 +18,7 @@ export function shouldBundleCliDependency(id: string): boolean {
 
 const repoEnv = loadRepoEnv();
 const configuredAppVersion = process.env.APP_VERSION?.trim() || serverPackageJson.version;
+const cliBuildChannel = configuredAppVersion.includes("-nightly.") ? "nightly" : "latest";
 
 export default mergeConfig(
   baseConfig,
@@ -45,6 +46,7 @@ export default mergeConfig(
       },
       define: {
         __T3CODE_BUILD_APP_VERSION__: JSON.stringify(configuredAppVersion),
+        __T3CODE_BUILD_CHANNEL__: JSON.stringify(cliBuildChannel),
         __T3CODE_BUILD_RELAY_URL__: JSON.stringify(repoEnv.T3CODE_RELAY_URL?.trim() ?? ""),
         __T3CODE_BUILD_CLERK_PUBLISHABLE_KEY__: JSON.stringify(
           repoEnv.T3CODE_CLERK_PUBLISHABLE_KEY?.trim() ?? "",

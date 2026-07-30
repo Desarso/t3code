@@ -67,7 +67,7 @@ const disabledApnsQueueLayer = ApnsDeliveryQueue.layer.pipe(
       ApnsDeliveryQueue.ApnsDeliveryQueueSender.of({
         send: () =>
           Effect.fail(
-            new Cloudflare.QueueSendError({
+            new Cloudflare.Queues.SendError({
               message: "APNs delivery is not enabled by the self-hosted Android relay",
             }),
           ),
@@ -145,6 +145,7 @@ const program = Effect.gen(function* () {
         port: config.port,
       }),
     ),
+    Layer.provide(runtimeLayer),
   );
 
   yield* Effect.logInfo(`Self-hosted relay listening on 0.0.0.0:${config.port}`);

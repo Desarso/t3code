@@ -1,5 +1,5 @@
 import { memo, useEffect, useState } from "react";
-import { Alert, AlertDescription } from "../ui/alert";
+import { Alert, AlertAction, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
 import { CircleAlertIcon, XIcon } from "lucide-react";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -41,10 +41,10 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
   };
 
   return (
-    <div className="w-full px-3 pt-3">
-      <Alert variant="error" className="mx-auto w-full max-w-3xl">
+    <div className="mx-auto w-full max-w-3xl px-3 pt-3">
+      <Alert variant="error">
         <CircleAlertIcon />
-        <AlertDescription className="min-w-0 gap-2">
+        <AlertDescription className="min-w-0">
           <Tooltip>
             <TooltipTrigger
               render={
@@ -57,7 +57,9 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
               {error}
             </TooltipPopup>
           </Tooltip>
-          {action || onDismiss ? (
+        </AlertDescription>
+        {action || onDismiss ? (
+          <AlertAction>
             <div
               data-slot="thread-error-actions"
               className="flex min-w-0 flex-wrap items-center justify-end gap-1"
@@ -73,8 +75,8 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
                 </Button>
               ) : null}
             </div>
-          ) : null}
-        </AlertDescription>
+          </AlertAction>
+        ) : null}
       </Alert>
     </div>
   );
