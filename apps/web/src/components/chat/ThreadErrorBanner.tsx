@@ -41,8 +41,8 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
   };
 
   return (
-    <div className="mx-auto w-full max-w-3xl px-3 pt-3">
-      <Alert variant="error">
+    <div className="mx-auto w-fit max-w-[min(48rem,calc(100%-2rem))] pt-3">
+      <Alert variant="error" controlAlignment="first-line">
         <CircleAlertIcon />
         <AlertDescription className="min-w-0">
           <Tooltip>
