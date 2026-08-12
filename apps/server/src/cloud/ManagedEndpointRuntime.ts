@@ -226,16 +226,21 @@ export const make = Effect.gen(function* () {
     const connectorScope = yield* Scope.make("sequential");
     const child = yield* spawner
       .spawn(
-        ChildProcess.make(executable.executablePath, ["tunnel", "run"], {
-          detached: false,
-          env: {
-            ...process.env,
-            TUNNEL_TOKEN: config.connectorToken,
+        ChildProcess.make(
+          executable.executablePath,
+          // WARP and other managed networks commonly block cloudflared's QUIC transport on UDP 7844.
+          ["tunnel", "--protocol", "http2", "run"],
+          {
+            detached: false,
+            env: {
+              ...process.env,
+              TUNNEL_TOKEN: config.connectorToken,
+            },
+            shell: false,
+            stderr: "pipe",
+            stdout: "pipe",
           },
-          shell: false,
-          stderr: "pipe",
-          stdout: "pipe",
-        }),
+        ),
       )
       .pipe(
         Effect.provideService(Scope.Scope, connectorScope),
